@@ -21,7 +21,8 @@ import {
   User,
   LogIn,
   LogOut,
-  ShieldAlert
+  ShieldAlert,
+  Upload
 } from 'lucide-react';
 import { MapContainer, TileLayer, Marker, Popup, Polygon, useMap, Polyline, Circle, Tooltip as LeafletTooltip } from 'react-leaflet';
 import L from 'leaflet';
@@ -53,6 +54,7 @@ import {
 import { trainAndForecast, getAquiferForecast, SCENARIOS } from './utils/forecasting';
 import { calculateFlowVectors } from './utils/groundwaterFlow';
 import { translations } from './data/translations';
+import UploadAnalyze from './components/UploadAnalyze';
 import type { LanguageCode } from './data/translations';
 
 import standardDataRaw from './data/standardData.json';
@@ -108,7 +110,7 @@ export default function App() {
   const [selectedLanguage, setSelectedLanguage] = useState<LanguageCode>('en');
   const [userRole, setUserRole] = useState<'simple' | 'advanced'>('simple');
   const [selectedDataset, setSelectedDataset] = useState<'standard' | 'advanced'>('standard');
-  const [activeTab, setActiveTab] = useState<'overview' | 'map' | 'simulator' | 'ai' | 'settings'>('overview');
+  const [activeTab, setActiveTab] = useState<'overview' | 'map' | 'simulator' | 'ai' | 'upload' | 'settings'>('overview');
   const [loginModalOpen, setLoginModalOpen] = useState(false);
   const [usernameInput, setUsernameInput] = useState('');
   const [passwordInput, setPasswordInput] = useState('');
@@ -1103,6 +1105,15 @@ export default function App() {
                   <span>{t.tabAI}</span>
                 </div>
                 {userRole === 'simple' && <Lock size={12} style={{ color: '#fb923c', marginLeft: isRtl ? '0' : '8px', marginRight: isRtl ? '8px' : '0' }} />}
+              </div>
+            </li>
+            <li>
+              <div 
+                className={`nav-item ${activeTab === 'upload' ? 'active' : ''}`}
+                onClick={() => setActiveTab('upload')}
+              >
+                <Upload size={18} />
+                <span>Upload & Analyze</span>
               </div>
             </li>
             <li>
@@ -2386,7 +2397,18 @@ export default function App() {
 
               {/* Simulation Output Dashboard */}
               <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
-                
+
+                {/* ── Source Context Breadcrumb ── */}
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '10px 16px', borderRadius: '8px', background: 'rgba(139,92,246,0.10)', border: '1px solid rgba(139,92,246,0.25)', fontSize: '13px' }}>
+                  <Activity size={15} style={{ color: 'var(--primary)', flexShrink: 0 }} />
+                  <span>
+                    <strong>Showing: </strong>
+                    {selectedDataset === 'advanced' && selectedAquifer
+                      ? <><span style={{ color: 'var(--primary)' }}>Aquifer: {selectedAquifer.name}</span> ({selectedAquifer.location}) &mdash; Well: {selectedWell?.name}&nbsp;[{selectedWell?.location}]</>  
+                      : <><span style={{ color: 'var(--primary)' }}>Well: {selectedWell?.name}</span> &mdash; {selectedWell?.location}</>}
+                  </span>
+                </div>
+
                 {/* Result Statistics Banner */}
                 <div className="glass-panel" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '16px' }}>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
@@ -2947,7 +2969,12 @@ export default function App() {
           </div>
         )}
 
-        {/* TAB 5: SETTINGS & DATA SOURCE CONTROL */}
+        {/* TAB 5: UPLOAD & ANALYZE */}
+        {activeTab === 'upload' && (
+          <UploadAnalyze userRole={userRole} selectedLanguage={selectedLanguage} />
+        )}
+
+        {/* TAB 6: SETTINGS & DATA SOURCE CONTROL */}
         {activeTab === 'settings' && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
             <div className="header-row">
