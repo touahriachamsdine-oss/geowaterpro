@@ -117,7 +117,7 @@ export default function App() {
   const [selectedWellId, setSelectedWellId] = useState<number>(1);
   const [selectedAquiferId, setSelectedAquiferId] = useState<number>(1);
   const [wellSearch, setWellSearch] = useState('');
-  const [aquiferFilter, setAquiferFilter] = useState<number | 'all'>('all');
+  const [aquiferFilter, _setAquiferFilter] = useState<number | 'all'>('all');
   const [showFlowDirections, setShowFlowDirections] = useState(true);
   const [showFlowChannels, setShowFlowChannels] = useState(true);
   const [showPotentiometric, setShowPotentiometric] = useState(false);
@@ -626,7 +626,7 @@ export default function App() {
       const wellsInAquifer = advancedWells.filter(w => w.aquiferId === selectedAquifer.id);
       if (wellsInAquifer.length === 0) return [];
       
-      const avgInitialWL = wellsInAquifer.reduce((sum, w) => sum + (w.history[0]?.wl || 0), 0) / wellsInAquifer.length;
+      const _avgInitialWL = wellsInAquifer.reduce((sum, w) => sum + (w.history[0]?.wl || 0), 0) / wellsInAquifer.length; void _avgInitialWL;
       const avgElevation = wellsInAquifer.reduce((sum, w) => sum + w.z, 0) / wellsInAquifer.length;
 
       // Add history (first 12 points)
@@ -905,45 +905,9 @@ export default function App() {
     });
   }, [selectedDataset, advancedAquifers, advancedWells, currentForecastScenario]);
 
-  const aquiferAverageHistory = useMemo(() => {
-    if (selectedDataset !== 'advanced' || !selectedAquifer) return [];
-    const wellsInAq = advancedWells.filter(w => w.aquiferId === selectedAquifer.id);
-    if (wellsInAq.length === 0) return [];
-    
-    const historyLen = wellsInAq[0].history.length;
-    return Array.from({ length: historyLen }, (_, idx) => {
-      const month = wellsInAq[0].history[idx].month;
-      const sumWL = wellsInAq.reduce((sum, w) => sum + (w.history[idx]?.wl || 0), 0);
-      const sumQ = wellsInAq.reduce((sum, w) => sum + (w.history[idx]?.q || 0), 0);
-      const sumR = wellsInAq.reduce((sum, w) => sum + (w.history[idx]?.r || 0), 0);
-      const numWells = wellsInAq.length;
-      return {
-        month,
-        wl: parseFloat((sumWL / numWells).toFixed(2)),
-        q: parseFloat((sumQ / numWells).toFixed(1)),
-        r: parseFloat((sumR / numWells).toFixed(4))
-      };
-    });
-  }, [selectedDataset, selectedAquifer, advancedWells]);
+  // aquiferAverageHistory — reserved for future chart; computed lazily via selectedAquiferWellsHistory below
 
-  const allAquifersHistoryData = useMemo(() => {
-    if (selectedDataset !== 'advanced') return [];
-    const historyLen = 12;
-    return Array.from({ length: historyLen }, (_, idx) => {
-      const month = advancedWells[0].history[idx].month;
-      const row: any = { month: month.substring(5) };
-      advancedAquifers.forEach(aq => {
-        const wellsInAq = advancedWells.filter(w => w.aquiferId === aq.id);
-        if (wellsInAq.length > 0) {
-          const sumWL = wellsInAq.reduce((sum, w) => sum + (w.history[idx]?.wl || 0), 0);
-          row[`aq_${aq.id}`] = parseFloat((sumWL / wellsInAq.length).toFixed(2));
-        } else {
-          row[`aq_${aq.id}`] = 0;
-        }
-      });
-      return row;
-    });
-  }, [selectedDataset, advancedAquifers, advancedWells]);
+  // allAquifersHistoryData — reserved for future cross-aquifer comparison chart
 
   const selectedAquiferWellsHistory = useMemo(() => {
     if (selectedDataset !== 'advanced' || !selectedAquifer) return [];
