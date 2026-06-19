@@ -37,7 +37,10 @@ import {
   ScatterChart, 
   Scatter,
   AreaChart,
-  Area
+  Area,
+  BarChart,
+  Bar,
+  Cell
 } from 'recharts';
 
 // Import local utilities and datasets
@@ -47,7 +50,7 @@ import {
   calculateCooperJacobDrawdown, 
   calculateDupuitDrawdown 
 } from './utils/analyticalModels';
-import { trainAndForecast, SCENARIOS } from './utils/forecasting';
+import { trainAndForecast, getAquiferForecast, SCENARIOS } from './utils/forecasting';
 import { calculateFlowVectors } from './utils/groundwaterFlow';
 import { translations } from './data/translations';
 import type { LanguageCode } from './data/translations';
@@ -112,6 +115,7 @@ export default function App() {
   const [loginError, setLoginError] = useState('');
 
   const [selectedWellId, setSelectedWellId] = useState<number>(1);
+  const [selectedAquiferId, setSelectedAquiferId] = useState<number>(1);
   const [wellSearch, setWellSearch] = useState('');
   const [aquiferFilter, setAquiferFilter] = useState<number | 'all'>('all');
   const [showFlowDirections, setShowFlowDirections] = useState(true);
@@ -152,9 +156,18 @@ export default function App() {
 
   // Selected Aquifer Object (For advanced dataset)
   const selectedAquifer = useMemo(() => {
-    if (selectedDataset === 'standard' || !selectedWell || !selectedWell.aquiferId) return null;
-    return aquifers.find(a => a.id === selectedWell.aquiferId) || null;
-  }, [selectedDataset, selectedWell, aquifers]);
+    if (selectedDataset === 'standard') return null;
+    return aquifers.find(a => a.id === selectedAquiferId) || aquifers[0] || null;
+  }, [selectedDataset, selectedAquiferId, aquifers]);
+
+  // Synchronize selectedAquiferId with selectedWell.aquiferId when selected well changes in advanced mode
+  useEffect(() => {
+    if (selectedDataset === 'advanced' && selectedWell && selectedWell.aquiferId) {
+      if (selectedWell.aquiferId !== selectedAquiferId) {
+        setSelectedAquiferId(selectedWell.aquiferId);
+      }
+    }
+  }, [selectedWellId, selectedWell, selectedDataset, selectedAquiferId]);
 
   // Search/Filter Wells List
   const filteredWells = useMemo(() => {
@@ -564,98 +577,168 @@ export default function App() {
     return SCENARIOS.find(s => s.id === activeScenarioId) || SCENARIOS[1];
   }, [activeScenarioId]);
 
+  const aquiferForecastResult = useMemo(() => {
+    if (selectedDataset !== 'advanced' || !selectedAquifer) return null;
+    const wellsInAquifer = advancedWells.filter(w => w.aquiferId === selectedAquifer.id);
+    if (wellsInAquifer.length === 0) return null;
+    return getAquiferForecast(
+      wellsInAquifer,
+      currentForecastScenario,
+      6,
+      selectedAquifer.K,
+      selectedAquifer.b,
+      selectedAquifer.S
+    );
+  }, [selectedDataset, selectedAquifer, currentForecastScenario, advancedWells]);
+
   const forecastResult = useMemo(() => {
     if (!selectedWell) return null;
+    if (selectedDataset === 'advanced') {
+      return trainAndForecast(
+        selectedWell.history,
+        currentForecastScenario,
+        6,
+        selectedAquifer?.K,
+        selectedAquifer?.b,
+        selectedAquifer?.S
+      );
+    }
     return trainAndForecast(
       selectedWell.history,
       currentForecastScenario,
-      6,
-      selectedAquifer?.K,
-      selectedAquifer?.b,
-      selectedAquifer?.S
+      6
     );
-  }, [selectedWell, currentForecastScenario, selectedAquifer]);
+  }, [selectedWell, currentForecastScenario, selectedAquifer, selectedDataset]);
+
+  const currentForecastResult = useMemo(() => {
+    if (selectedDataset === 'advanced') {
+      return aquiferForecastResult;
+    }
+    return forecastResult;
+  }, [selectedDataset, aquiferForecastResult, forecastResult]);
 
   const aiForecastData = useMemo(() => {
-    if (!selectedWell || !forecastResult) return [];
-    
-    const { forecastPoints, historyFits } = forecastResult;
+    if (selectedDataset === 'advanced') {
+      if (!selectedAquifer || !aquiferForecastResult) return [];
+      const { forecastPoints, historyFits } = aquiferForecastResult;
+      
+      const combinedData: any[] = [];
+      const wellsInAquifer = advancedWells.filter(w => w.aquiferId === selectedAquifer.id);
+      if (wellsInAquifer.length === 0) return [];
+      
+      const avgInitialWL = wellsInAquifer.reduce((sum, w) => sum + (w.history[0]?.wl || 0), 0) / wellsInAquifer.length;
+      const avgElevation = wellsInAquifer.reduce((sum, w) => sum + w.z, 0) / wellsInAquifer.length;
 
-    interface ChartPoint {
-      month: string;
-      actualWL: number | null;
-      historyWL: number | null;
-      forecastWL: number | null;
-      historyAnalyticalWL: number | null;
-      forecastAnalyticalWL: number | null;
-      historyAIWL: number | null;
-      forecastAIWL: number | null;
-      historyDrawdown: number | null;
-      forecastDrawdown: number | null;
-      historyHead: number | null;
-      forecastHead: number | null;
-      historyQ: number | null;
-      forecastQ: number | null;
-      historyR: number | null;
-      forecastR: number | null;
-      isForecast: boolean;
-      [key: string]: any;
+      // Add history (first 12 points)
+      historyFits.forEach((fit, idx) => {
+        const actualWlSum = wellsInAquifer.reduce((sum, w) => sum + (w.history[idx]?.wl || 0), 0);
+        const actualWL = actualWlSum / wellsInAquifer.length;
+
+        combinedData.push({
+          month: fit.month.substring(5), // "01", "02", etc
+          actualWL: parseFloat(actualWL.toFixed(2)),
+          historyWL: fit.wl,
+          forecastWL: null,
+          historyAnalyticalWL: fit.wlAnalytical,
+          forecastAnalyticalWL: null,
+          historyAIWL: fit.wlAI,
+          forecastAIWL: null,
+          historyDrawdown: fit.drawdown,
+          forecastDrawdown: null,
+          historyHead: parseFloat((avgElevation - actualWL).toFixed(2)),
+          forecastHead: null,
+          historyQ: fit.q,
+          forecastQ: null,
+          historyR: fit.r !== undefined ? fit.r : null,
+          forecastR: null,
+          [t.drawdown]: fit.drawdown,
+          isForecast: false
+        });
+      });
+
+      // Add forecast
+      forecastPoints.forEach(pt => {
+        combinedData.push({
+          month: pt.month + " (IA)",
+          actualWL: null,
+          historyWL: null,
+          forecastWL: pt.wl,
+          historyAnalyticalWL: null,
+          forecastAnalyticalWL: pt.wlAnalytical,
+          historyAIWL: null,
+          forecastAIWL: pt.wlAI,
+          historyDrawdown: null,
+          forecastDrawdown: pt.drawdown,
+          historyHead: null,
+          forecastHead: parseFloat((avgElevation - pt.wl).toFixed(2)),
+          historyQ: null,
+          forecastQ: pt.q,
+          historyR: null,
+          forecastR: pt.r !== undefined ? pt.r : null,
+          [t.drawdown]: pt.drawdown,
+          isForecast: true
+        });
+      });
+
+      return combinedData;
+    } else {
+      if (!selectedWell || !forecastResult) return [];
+      
+      const { forecastPoints, historyFits } = forecastResult;
+      const combinedData: any[] = [];
+      const initialWL = selectedWell.history[0]?.wl || 0;
+      
+      selectedWell.history.forEach((pt, idx) => {
+        const fit = historyFits[idx];
+        combinedData.push({
+          month: pt.month.substring(5), // "01", "02", etc
+          actualWL: pt.wl,
+          historyWL: fit ? fit.wl : null,
+          forecastWL: null,
+          historyAnalyticalWL: fit ? fit.wlAnalytical : null,
+          forecastAnalyticalWL: null,
+          historyAIWL: fit ? fit.wlAI : null,
+          forecastAIWL: null,
+          historyDrawdown: parseFloat((pt.wl - initialWL).toFixed(2)),
+          forecastDrawdown: null,
+          historyHead: parseFloat((selectedWell.z - pt.wl).toFixed(2)),
+          forecastHead: null,
+          historyQ: pt.q,
+          forecastQ: null,
+          historyR: pt.r !== undefined ? pt.r : null,
+          forecastR: null,
+          [t.drawdown]: parseFloat((pt.wl - initialWL).toFixed(2)),
+          isForecast: false
+        });
+      });
+
+      forecastPoints.forEach(pt => {
+        combinedData.push({
+          month: pt.month + " (IA)",
+          actualWL: null,
+          historyWL: null,
+          forecastWL: pt.wl,
+          historyAnalyticalWL: null,
+          forecastAnalyticalWL: pt.wlAnalytical,
+          historyAIWL: null,
+          forecastAIWL: pt.wlAI,
+          historyDrawdown: null,
+          forecastDrawdown: pt.drawdown,
+          historyHead: null,
+          forecastHead: parseFloat((selectedWell.z - pt.wl).toFixed(2)),
+          historyQ: null,
+          forecastQ: pt.q,
+          historyR: null,
+          forecastR: pt.r !== undefined ? pt.r : null,
+          [t.drawdown]: pt.drawdown,
+          isForecast: true
+        });
+      });
+
+      return combinedData;
     }
+  }, [selectedDataset, selectedWell, selectedAquifer, forecastResult, aquiferForecastResult, t.drawdown, advancedWells]);
 
-    const combinedData: ChartPoint[] = [];
-    const initialWL = selectedWell.history[0]?.wl || 0;
-    
-    // Add history (first 12 points)
-    selectedWell.history.forEach((pt, idx) => {
-      const fit = historyFits[idx];
-      combinedData.push({
-        month: pt.month.substring(5), // "01", "02", etc
-        actualWL: pt.wl,
-        historyWL: fit ? fit.wl : null,
-        forecastWL: null,
-        historyAnalyticalWL: fit ? fit.wlAnalytical : null,
-        forecastAnalyticalWL: null,
-        historyAIWL: fit ? fit.wlAI : null,
-        forecastAIWL: null,
-        historyDrawdown: parseFloat((pt.wl - initialWL).toFixed(2)),
-        forecastDrawdown: null,
-        historyHead: parseFloat((selectedWell.z - pt.wl).toFixed(2)),
-        forecastHead: null,
-        historyQ: pt.q,
-        forecastQ: null,
-        historyR: pt.r !== undefined ? pt.r : null,
-        forecastR: null,
-        [t.drawdown]: parseFloat((pt.wl - initialWL).toFixed(2)),
-        isForecast: false
-      });
-    });
-
-    // Add forecast
-    forecastPoints.forEach(pt => {
-      combinedData.push({
-        month: pt.month + " (IA)",
-        actualWL: null,
-        historyWL: null,
-        forecastWL: pt.wl,
-        historyAnalyticalWL: null,
-        forecastAnalyticalWL: pt.wlAnalytical,
-        historyAIWL: null,
-        forecastAIWL: pt.wlAI,
-        historyDrawdown: null,
-        forecastDrawdown: pt.drawdown,
-        historyHead: null,
-        forecastHead: parseFloat((selectedWell.z - pt.wl).toFixed(2)),
-        historyQ: null,
-        forecastQ: pt.q,
-        historyR: null,
-        forecastR: pt.r !== undefined ? pt.r : null,
-        [t.drawdown]: pt.drawdown,
-        isForecast: true
-      });
-    });
-
-    return combinedData;
-  }, [selectedWell, forecastResult, t.drawdown]);
   const historyKey = activeForecastMetric === 'wl' 
     ? 'historyWL' 
     : activeForecastMetric === 'drawdown' 
@@ -703,14 +786,12 @@ export default function App() {
         return { percent: 95, rating: 'A', text: t.stable, color: 'good' };
       }
     } else {
-      if (aiForecastData.length === 0) return { percent: 100, rating: 'A', text: t.stable, color: 'good' };
+      if (aiForecastData.length === 0 || !selectedAquifer) return { percent: 100, rating: 'A', text: t.stable, color: 'good' };
       
-      // Grab final forecast drawdown
       const finalPt = aiForecastData[aiForecastData.length - 1];
       const finalDrawdown = finalPt[t.drawdown] as number;
 
-      // Saturated thickness limits
-      const maxThickness = selectedAquifer ? selectedAquifer.b : 35;
+      const maxThickness = selectedAquifer.b;
       const depletionRatio = finalDrawdown / maxThickness;
 
       if (depletionRatio > 0.4 || finalDrawdown > 8.0) {
@@ -739,18 +820,176 @@ export default function App() {
   }, [selectedDataset, selectedWell, aiForecastData, selectedAquifer, t.drawdown, t.waterLevel, t.stable, t.warning, t.critical]);
 
   const computedSafeYield = useMemo(() => {
-    if (!selectedWell) return 0;
-    // Heuristic: compute average recharge for this aquifer and assign sustainable limits
-    const history = selectedWell.history;
-    const recharges = history.map(h => h.r || 0.003);
-    const avgRecharge = recharges.reduce((s, v) => s + v, 0) / recharges.length;
+    if (selectedDataset === 'standard') {
+      if (!selectedWell) return 0;
+      const history = selectedWell.history;
+      const baselineAvgQ = history.reduce((s, h) => s + h.q, 0) / history.length;
+      return Math.round(baselineAvgQ * 0.9);
+    } else {
+      if (!selectedAquifer) return 0;
+      const wellsInAquifer = advancedWells.filter(w => w.aquiferId === selectedAquifer.id);
+      if (wellsInAquifer.length === 0) return 0;
+      let totalQ = 0;
+      let totalR = 0;
+      let countPoints = 0;
+      wellsInAquifer.forEach(w => {
+        w.history.forEach(h => {
+          totalQ += h.q;
+          totalR += h.r || 0.003;
+          countPoints++;
+        });
+      });
+      const avgQ = countPoints > 0 ? totalQ / countPoints : 40000;
+      const avgR = countPoints > 0 ? totalR / countPoints : 0.003;
+      const factor = avgR / 0.003;
+      return Math.round(avgQ * factor);
+    }
+  }, [selectedWell, selectedAquifer, selectedDataset, advancedWells]);
+
+  const aquifersSummary = useMemo(() => {
+    if (selectedDataset !== 'advanced') return [];
     
-    // Safe Pumping = Recharge Rate * Area (approx) * Factor
-    // Standard sustainable safe yield in m3/month for this well
-    const baselineAvgQ = history.reduce((s, h) => s + h.q, 0) / history.length;
-    const factor = selectedDataset === 'advanced' ? (avgRecharge / 0.003) : 0.9;
-    return Math.round(baselineAvgQ * factor);
-  }, [selectedWell, selectedDataset]);
+    return advancedAquifers.map(aq => {
+      const wellsInAq = advancedWells.filter(w => w.aquiferId === aq.id);
+      const numWells = wellsInAq.length || 1;
+      
+      const avgCurrentWL = wellsInAq.reduce((sum, w) => {
+        const lastPt = w.history[w.history.length - 1];
+        return sum + (lastPt ? lastPt.wl : 0);
+      }, 0) / numWells;
+
+      const forecast = getAquiferForecast(
+        wellsInAq,
+        currentForecastScenario,
+        6,
+        aq.K,
+        aq.b,
+        aq.S
+      );
+
+      const latestForecastWL = forecast.forecastPoints[forecast.forecastPoints.length - 1].wl;
+      const latestForecastDrawdown = forecast.forecastPoints[forecast.forecastPoints.length - 1].drawdown;
+
+      const depletionRatio = latestForecastDrawdown / aq.b;
+
+      let status: 'stable' | 'warning' | 'critical' = 'stable';
+      if (depletionRatio > 0.4 || latestForecastDrawdown > 8.0) {
+        status = 'critical';
+      } else if (depletionRatio > 0.15 || latestForecastDrawdown > 3.0) {
+        status = 'warning';
+      }
+
+      const avgQ = wellsInAq.reduce((sum, w) => {
+        const lastPt = w.history[w.history.length - 1];
+        return sum + (lastPt ? lastPt.q : 0);
+      }, 0) / numWells;
+
+      const avgR = wellsInAq.reduce((sum, w) => {
+        const lastPt = w.history[w.history.length - 1];
+        return sum + (lastPt ? (lastPt.r || 0) : 0);
+      }, 0) / numWells;
+
+      return {
+        id: aq.id,
+        name: aq.name,
+        location: aq.location,
+        type: aq.captiveType,
+        wellsCount: numWells,
+        currentWL: parseFloat(avgCurrentWL.toFixed(2)),
+        forecastWL: parseFloat(latestForecastWL.toFixed(2)),
+        drawdown: parseFloat(latestForecastDrawdown.toFixed(2)),
+        q: Math.round(avgQ),
+        r: parseFloat(avgR.toFixed(4)),
+        status
+      };
+    });
+  }, [selectedDataset, advancedAquifers, advancedWells, currentForecastScenario]);
+
+  const aquiferAverageHistory = useMemo(() => {
+    if (selectedDataset !== 'advanced' || !selectedAquifer) return [];
+    const wellsInAq = advancedWells.filter(w => w.aquiferId === selectedAquifer.id);
+    if (wellsInAq.length === 0) return [];
+    
+    const historyLen = wellsInAq[0].history.length;
+    return Array.from({ length: historyLen }, (_, idx) => {
+      const month = wellsInAq[0].history[idx].month;
+      const sumWL = wellsInAq.reduce((sum, w) => sum + (w.history[idx]?.wl || 0), 0);
+      const sumQ = wellsInAq.reduce((sum, w) => sum + (w.history[idx]?.q || 0), 0);
+      const sumR = wellsInAq.reduce((sum, w) => sum + (w.history[idx]?.r || 0), 0);
+      const numWells = wellsInAq.length;
+      return {
+        month,
+        wl: parseFloat((sumWL / numWells).toFixed(2)),
+        q: parseFloat((sumQ / numWells).toFixed(1)),
+        r: parseFloat((sumR / numWells).toFixed(4))
+      };
+    });
+  }, [selectedDataset, selectedAquifer, advancedWells]);
+
+  const allAquifersHistoryData = useMemo(() => {
+    if (selectedDataset !== 'advanced') return [];
+    const historyLen = 12;
+    return Array.from({ length: historyLen }, (_, idx) => {
+      const month = advancedWells[0].history[idx].month;
+      const row: any = { month: month.substring(5) };
+      advancedAquifers.forEach(aq => {
+        const wellsInAq = advancedWells.filter(w => w.aquiferId === aq.id);
+        if (wellsInAq.length > 0) {
+          const sumWL = wellsInAq.reduce((sum, w) => sum + (w.history[idx]?.wl || 0), 0);
+          row[`aq_${aq.id}`] = parseFloat((sumWL / wellsInAq.length).toFixed(2));
+        } else {
+          row[`aq_${aq.id}`] = 0;
+        }
+      });
+      return row;
+    });
+  }, [selectedDataset, advancedAquifers, advancedWells]);
+
+  const selectedAquiferWellsHistory = useMemo(() => {
+    if (selectedDataset !== 'advanced' || !selectedAquifer) return [];
+    const wellsInAq = advancedWells.filter(w => w.aquiferId === selectedAquifer.id);
+    if (wellsInAq.length === 0) return [];
+    const historyLen = 12;
+    return Array.from({ length: historyLen }, (_, idx) => {
+      const month = wellsInAq[0]?.history[idx]?.month || '';
+      const row: any = { month: month.substring(5) };
+      wellsInAq.forEach(w => {
+        row[w.name] = w.history[idx]?.wl || 0;
+      });
+      return row;
+    });
+  }, [selectedDataset, selectedAquifer, advancedWells]);
+
+  const aquiferNetChangeData = useMemo(() => {
+    if (selectedDataset !== 'advanced') return [];
+    return aquifersSummary.map(aq => ({
+      name: aq.name,
+      netChange: parseFloat((aq.forecastWL - aq.currentWL).toFixed(2)),
+      color: aq.id === 1 ? '#c084fc' : aq.id === 2 ? '#38bdf8' : '#10b981'
+    }));
+  }, [selectedDataset, aquifersSummary]);
+
+  const wellNetChangeData = useMemo(() => {
+    if (selectedDataset !== 'advanced' || !selectedAquifer) return [];
+    const wellsInAq = advancedWells.filter(w => w.aquiferId === selectedAquifer.id);
+    return wellsInAq.map(well => {
+      const aq = advancedAquifers.find(a => a.id === well.aquiferId);
+      const res = trainAndForecast(
+        well.history,
+        currentForecastScenario,
+        6,
+        aq?.K,
+        aq?.b,
+        aq?.S
+      );
+      const currentWL = well.history[well.history.length - 1]?.wl || 0;
+      const forecastWL = res.forecastPoints[res.forecastPoints.length - 1]?.wl || 0;
+      return {
+        name: well.name,
+        netChange: parseFloat((forecastWL - currentWL).toFixed(2))
+      };
+    });
+  }, [selectedDataset, selectedAquifer, advancedWells, currentForecastScenario, advancedAquifers]);
 
   // Overall Statistics for Dashboard
   const dashboardStats = useMemo(() => {
@@ -821,7 +1060,7 @@ export default function App() {
         });
 
         pdf.addImage(imgData, 'PNG', 0, 0, canvas.width, canvas.height);
-        pdf.save(`GeoWater_AI_Forecast_${selectedWell?.name || 'Well'}.pdf`);
+        pdf.save(`GeoWaterics_AI_Forecast_${selectedWell?.name || 'Well'}.pdf`);
       } catch (err) {
         console.error('Error generating PDF:', err);
       } finally {
@@ -1082,205 +1321,454 @@ export default function App() {
             </div>
 
             {/* Dashboard General Stats Cards */}
-            <div className="metrics-grid">
-              <div className="glass-panel metric-card">
-                <div className="metric-icon-box purple">
-                  <Droplet size={24} />
+            {selectedDataset === 'standard' ? (
+              <div className="metrics-grid">
+                <div className="glass-panel metric-card">
+                  <div className="metric-icon-box purple">
+                    <Droplet size={24} />
+                  </div>
+                  <div className="metric-info">
+                    <span className="metric-label">{t.pumpingRate} (Latest)</span>
+                    <span className="metric-value">{dashboardStats.totalPumped.toLocaleString()} {t.m3month}</span>
+                  </div>
                 </div>
-                <div className="metric-info">
-                  <span className="metric-label">{t.pumpingRate} (Latest)</span>
-                  <span className="metric-value">{dashboardStats.totalPumped.toLocaleString()} {t.m3month}</span>
+                <div className="glass-panel metric-card">
+                  <div className="metric-icon-box blue">
+                    <Activity size={24} />
+                  </div>
+                  <div className="metric-info">
+                    <span className="metric-label">{t.waterLevel} (Mean)</span>
+                    <span className="metric-value">{dashboardStats.averageDepth} {t.m}</span>
+                  </div>
+                </div>
+                <div className="glass-panel metric-card">
+                  <div className="metric-icon-box yellow">
+                    <TrendingDown size={24} />
+                  </div>
+                  <div className="metric-info">
+                    <span className="metric-label">Max Seasonal {t.drawdown}</span>
+                    <span className="metric-value">{dashboardStats.maxDrawdown} {t.m}</span>
+                  </div>
+                </div>
+                <div className="glass-panel metric-card">
+                  <div className="metric-icon-box green">
+                    <MapPin size={24} />
+                  </div>
+                  <div className="metric-info">
+                    <span className="metric-label">Monitored {t.wells}</span>
+                    <span className="metric-value">{dashboardStats.activeWellsCount}</span>
+                  </div>
                 </div>
               </div>
-              <div className="glass-panel metric-card">
-                <div className="metric-icon-box blue">
-                  <Activity size={24} />
-                </div>
-                <div className="metric-info">
-                  <span className="metric-label">{t.waterLevel} (Mean)</span>
-                  <span className="metric-value">{dashboardStats.averageDepth} {t.m}</span>
-                </div>
+            ) : (
+              <div className="aquifer-summary-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: '20px' }}>
+                {aquifersSummary.map(aq => {
+                  const aquiferColor = aq.id === 1 ? '#c084fc' : aq.id === 2 ? '#38bdf8' : '#10b981';
+                  const isSelected = selectedAquiferId === aq.id;
+                  return (
+                    <div 
+                      key={aq.id} 
+                      className={`glass-panel aquifer-summary-card ${isSelected ? 'active' : ''}`}
+                      onClick={() => {
+                        setSelectedAquiferId(aq.id);
+                        const firstWell = wells.find(w => w.aquiferId === aq.id);
+                        if (firstWell) {
+                          setSelectedWellId(firstWell.id);
+                        }
+                      }}
+                      style={{
+                        padding: '20px',
+                        cursor: 'pointer',
+                        border: isSelected ? `2px solid ${aquiferColor}` : '1px solid var(--panel-border)',
+                        borderLeft: `6px solid ${aquiferColor}`,
+                        background: isSelected ? 'rgba(255, 255, 255, 0.08)' : 'rgba(255, 255, 255, 0.02)',
+                        transition: 'all 0.3s ease',
+                        position: 'relative',
+                        borderRadius: '12px'
+                      }}
+                    >
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '12px' }}>
+                        <div>
+                          <h4 style={{ margin: 0, fontSize: '16px', fontWeight: '700', color: '#fff' }}>{aq.name}</h4>
+                          <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>{aq.location}</span>
+                        </div>
+                        <span className={`status-badge ${aq.status}`} style={{ fontSize: '11px', padding: '4px 8px', borderRadius: '4px', textTransform: 'capitalize' }}>
+                          {aq.status}
+                        </span>
+                      </div>
+                      
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', fontSize: '13px', borderTop: '1px solid rgba(255,255,255,0.05)', paddingTop: '12px' }}>
+                        <div>
+                          <span style={{ color: 'var(--text-muted)', display: 'block', fontSize: '11px' }}>{t.wells}</span>
+                          <strong>{aq.wellsCount} Active Wells</strong>
+                        </div>
+                        <div>
+                          <span style={{ color: 'var(--text-muted)', display: 'block', fontSize: '11px' }}>{t.aquiferType}</span>
+                          <strong>{aq.type}</strong>
+                        </div>
+                        <div>
+                          <span style={{ color: 'var(--text-muted)', display: 'block', fontSize: '11px' }}>Avg {t.waterLevel}</span>
+                          <strong>{aq.currentWL} m</strong>
+                        </div>
+                        <div>
+                          <span style={{ color: 'var(--text-muted)', display: 'block', fontSize: '11px' }}>Avg Pumping</span>
+                          <strong>{aq.q.toLocaleString()} m³/mo</strong>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
-              <div className="glass-panel metric-card">
-                <div className="metric-icon-box yellow">
-                  <TrendingDown size={24} />
-                </div>
-                <div className="metric-info">
-                  <span className="metric-label">Max Seasonal {t.drawdown}</span>
-                  <span className="metric-value">{dashboardStats.maxDrawdown} {t.m}</span>
-                </div>
-              </div>
-              <div className="glass-panel metric-card">
-                <div className="metric-icon-box green">
-                  <MapPin size={24} />
-                </div>
-                <div className="metric-info">
-                  <span className="metric-label">Monitored {t.wells}</span>
-                  <span className="metric-value">{dashboardStats.activeWellsCount}</span>
-                </div>
-              </div>
-            </div>
+            )}
 
             {/* Main Interactive Dashboard Section */}
             <div className="dashboard-layout">
-              {/* Sidebar: Wells List */}
+              {/* Sidebar: Wells List / Aquifers List */}
               <div className="glass-panel well-list-panel">
-                <div className="search-container">
-                  <div style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
-                    <Search size={16} color="var(--text-secondary)" style={{ position: 'absolute', [isRtl ? 'right' : 'left']: '12px' }} />
-                    <input 
-                      type="text" 
-                      placeholder={t.wellName + "..."}
-                      value={wellSearch}
-                      onChange={(e) => setWellSearch(e.target.value)}
-                      className="form-input"
-                      style={{ width: '100%', paddingLeft: isRtl ? '12px' : '36px', paddingRight: isRtl ? '36px' : '12px' }}
-                    />
-                  </div>
-                </div>
-
-                {selectedDataset === 'advanced' && (
-                  <div className="form-group" style={{ marginBottom: '8px' }}>
-                    <select 
-                      value={aquiferFilter} 
-                      onChange={(e) => setAquiferFilter(e.target.value === 'all' ? 'all' : Number(e.target.value))}
-                      className="form-select"
-                      style={{ width: '100%' }}
-                    >
-                      <option value="all">All Aquifers</option>
-                      {aquifers.map(a => (
-                        <option key={a.id} value={a.id}>{a.name}</option>
-                      ))}
-                    </select>
-                  </div>
-                )}
-
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', overflowY: 'auto' }}>
-                  {filteredWells.map(well => {
-                    const isSelected = well.id === selectedWellId;
-                    const lastPt = well.history[well.history.length - 1];
-                    return (
-                      <div 
-                        key={well.id} 
-                        className={`well-item ${isSelected ? 'active' : ''}`}
-                        onClick={() => setSelectedWellId(well.id)}
-                      >
-                        <div>
-                          <div className="well-item-name">{well.name}</div>
-                          <div className="well-item-sub">{well.location}</div>
-                        </div>
-                        <div style={{ textAlign: isRtl ? 'left' : 'right', fontSize: '11px' }}>
-                          <div style={{ fontWeight: 'bold' }}>{lastPt?.wl} m</div>
-                          <div style={{ color: 'var(--text-muted)' }}>{Math.round(lastPt?.q / 30)} m³/d</div>
-                        </div>
+                {selectedDataset === 'standard' ? (
+                  <>
+                    <div className="search-container">
+                      <div style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
+                        <Search size={16} color="var(--text-secondary)" style={{ position: 'absolute', [isRtl ? 'right' : 'left']: '12px' }} />
+                        <input 
+                          type="text" 
+                          placeholder={t.wellName + "..."}
+                          value={wellSearch}
+                          onChange={(e) => setWellSearch(e.target.value)}
+                          className="form-input"
+                          style={{ width: '100%', paddingLeft: isRtl ? '12px' : '36px', paddingRight: isRtl ? '36px' : '12px' }}
+                        />
                       </div>
-                    );
-                  })}
-                </div>
+                    </div>
+
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', overflowY: 'auto' }}>
+                      {filteredWells.map(well => {
+                        const isSelected = well.id === selectedWellId;
+                        const lastPt = well.history[well.history.length - 1];
+                        return (
+                          <div 
+                            key={well.id} 
+                            className={`well-item ${isSelected ? 'active' : ''}`}
+                            onClick={() => setSelectedWellId(well.id)}
+                          >
+                            <div>
+                              <div className="well-item-name">{well.name}</div>
+                              <div className="well-item-sub">{well.location}</div>
+                            </div>
+                            <div style={{ textAlign: isRtl ? 'left' : 'right', fontSize: '11px' }}>
+                              <div style={{ fontWeight: 'bold' }}>{lastPt?.wl} m</div>
+                              <div style={{ color: 'var(--text-muted)' }}>{Math.round(lastPt?.q / 30)} m³/d</div>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    {/* Advanced Mode: Aquifer-centric Sidebar */}
+                    <div className="search-container" style={{ marginBottom: '12px' }}>
+                      <div style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
+                        <Search size={16} color="var(--text-secondary)" style={{ position: 'absolute', [isRtl ? 'right' : 'left']: '12px' }} />
+                        <input 
+                          type="text" 
+                          placeholder={t.wellName + "..."}
+                          value={wellSearch}
+                          onChange={(e) => setWellSearch(e.target.value)}
+                          className="form-input"
+                          style={{ width: '100%', paddingLeft: isRtl ? '12px' : '36px', paddingRight: isRtl ? '36px' : '12px' }}
+                        />
+                      </div>
+                    </div>
+
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '16px', overflowY: 'auto' }}>
+                      {aquifersSummary.map(aq => {
+                        const isAquiferSelected = selectedAquiferId === aq.id;
+                        const aquiferColor = aq.id === 1 ? '#c084fc' : aq.id === 2 ? '#38bdf8' : '#10b981';
+                        
+                        // Filter wells belonging to this aquifer
+                        const wellsInAq = wellsWithCoordinates.filter(w => w.aquiferId === aq.id && 
+                          (wellSearch === '' || w.name.toLowerCase().includes(wellSearch.toLowerCase()) || w.location.toLowerCase().includes(wellSearch.toLowerCase()))
+                        );
+
+                        return (
+                          <div key={aq.id} className="aquifer-group" style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                            {/* Aquifer Header Item */}
+                            <div 
+                              onClick={() => {
+                                setSelectedAquiferId(aq.id);
+                                // Automatically select first well of this aquifer
+                                const firstWell = wells.find(w => w.aquiferId === aq.id);
+                                if (firstWell) {
+                                  setSelectedWellId(firstWell.id);
+                                }
+                              }}
+                              className={`aquifer-sidebar-item ${isAquiferSelected ? 'active' : ''}`}
+                              style={{
+                                cursor: 'pointer',
+                                padding: '12px',
+                                borderRadius: '8px',
+                                borderLeft: `4px solid ${aquiferColor}`,
+                                background: isAquiferSelected ? 'rgba(255, 255, 255, 0.08)' : 'rgba(255, 255, 255, 0.02)',
+                                transition: 'all 0.2s ease',
+                                border: isAquiferSelected ? `1px solid ${aquiferColor}` : '1px solid rgba(255, 255, 255, 0.05)',
+                                borderLeftWidth: '4px'
+                              }}
+                            >
+                              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
+                                <span style={{ fontWeight: '600', fontSize: '14px', color: isAquiferSelected ? '#fff' : 'var(--text-secondary)' }}>{aq.name}</span>
+                                <span className={`status-badge ${aq.status}`} style={{ fontSize: '10px', padding: '2px 6px' }}>
+                                  {aq.status.toUpperCase()}
+                                </span>
+                              </div>
+                              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '11px', color: 'var(--text-muted)' }}>
+                                <span>{aq.type}</span>
+                                <span>Avg WL: <strong>{aq.currentWL} m</strong></span>
+                              </div>
+                            </div>
+
+                            {/* Nested Wells */}
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', paddingLeft: isRtl ? '0' : '12px', paddingRight: isRtl ? '12px' : '0' }}>
+                              {wellsInAq.map(well => {
+                                const isWellSelected = selectedWellId === well.id;
+                                return (
+                                  <div 
+                                    key={well.id} 
+                                    className={`well-item nested-well-item ${isWellSelected ? 'active' : ''}`}
+                                    onClick={() => {
+                                      setSelectedWellId(well.id);
+                                      setSelectedAquiferId(aq.id);
+                                    }}
+                                    style={{
+                                      padding: '8px 10px',
+                                      borderRadius: '6px',
+                                      fontSize: '12px',
+                                      background: isWellSelected ? 'rgba(255, 255, 255, 0.05)' : 'transparent',
+                                      border: isWellSelected ? '1px solid rgba(255, 255, 255, 0.1)' : '1px solid transparent',
+                                      cursor: 'pointer',
+                                      display: 'flex',
+                                      justifyContent: 'space-between',
+                                      alignItems: 'center'
+                                    }}
+                                  >
+                                    <div>
+                                      <div style={{ fontWeight: isWellSelected ? '600' : 'normal', color: isWellSelected ? '#fff' : 'var(--text-secondary)' }}>{well.name}</div>
+                                      <div style={{ fontSize: '10px', color: 'var(--text-muted)' }}>{well.location}</div>
+                                    </div>
+                                    <div style={{ fontSize: '11px', textAlign: 'right' }}>
+                                      <div>{well.history[well.history.length - 1]?.wl} m</div>
+                                    </div>
+                                  </div>
+                                );
+                              })}
+                              {wellsInAq.length === 0 && (
+                                <div style={{ fontSize: '11px', color: 'var(--text-muted)', paddingLeft: '8px', fontStyle: 'italic' }}>
+                                  No wells found
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </>
+                )}
               </div>
 
-              {/* Main Column: Well Analysis Charts */}
               <div className="charts-container">
-                {selectedWell && (
-                  <div className="glass-panel">
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '12px', marginBottom: '20px' }}>
-                      <div>
-                        <h3 style={{ fontSize: '22px', fontWeight: '700' }}>{selectedWell.name}</h3>
-                        <p style={{ color: 'var(--text-secondary)', fontSize: '13px' }}>
-                          {t.location}: {selectedWell.location} | {t.coordinates}: X: {selectedWell.x}, Y: {selectedWell.y} | Z: {selectedWell.z}m
-                        </p>
+                {selectedDataset === 'standard' ? (
+                  selectedWell && (
+                    <div className="glass-panel">
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '12px', marginBottom: '20px' }}>
+                        <div>
+                          <h3 style={{ fontSize: '22px', fontWeight: '700' }}>{selectedWell.name}</h3>
+                          <p style={{ color: 'var(--text-secondary)', fontSize: '13px' }}>
+                            {t.location}: {selectedWell.location} | {t.coordinates}: X: {selectedWell.x}, Y: {selectedWell.y} | Z: {selectedWell.z}m
+                          </p>
+                        </div>
                       </div>
 
-                      {/* Aquifer Metadata (if advanced) */}
-                      {selectedDataset === 'advanced' && selectedAquifer && (
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: '24px' }}>
+                        <div className="chart-card" style={{ border: '1px solid rgba(255,255,255,0.05)', borderRadius: '8px', padding: '16px' }}>
+                          <h4 style={{ fontSize: '15px', fontWeight: '600', marginBottom: '16px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                            <Activity size={16} color="var(--primary)" />
+                            {t.trend}: {t.waterLevel} (2024)
+                          </h4>
+                          <div style={{ height: '300px', width: '100%' }}>
+                            <ResponsiveContainer width="100%" height="100%">
+                              <AreaChart data={selectedWell.history}>
+                                <defs>
+                                  <linearGradient id="wlColor" x1="0" y1="0" x2="0" y2="1">
+                                    <stop offset="5%" stopColor="var(--primary)" stopOpacity={0.3}/>
+                                    <stop offset="95%" stopColor="var(--primary)" stopOpacity={0.0}/>
+                                  </linearGradient>
+                                </defs>
+                                <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
+                                <XAxis dataKey="month" stroke="var(--text-secondary)" tickFormatter={(m) => m.substring(5)} />
+                                <YAxis domain={['dataMin - 2', 'dataMax + 2']} reversed stroke="var(--text-secondary)" />
+                                <Tooltip />
+                                <Area type="monotone" dataKey="wl" name={t.waterLevel} stroke="var(--primary)" fillOpacity={1} fill="url(#wlColor)" strokeWidth={2} isAnimationActive={false} />
+                              </AreaChart>
+                            </ResponsiveContainer>
+                          </div>
+                          <p style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '8px', textAlign: 'center' }}>
+                            * Note: Y-axis is reversed because water table depth measures distance from surface down to water. A lower line means higher water table.
+                          </p>
+                        </div>
+
+                        <div className="chart-card" style={{ border: '1px solid rgba(255,255,255,0.05)', borderRadius: '8px', padding: '16px' }}>
+                          <h4 style={{ fontSize: '15px', fontWeight: '600', marginBottom: '16px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                            <Droplet size={16} color="var(--secondary)" />
+                            {t.pumpingRate} (2024)
+                          </h4>
+                          <div style={{ height: '300px', width: '100%' }}>
+                            <ResponsiveContainer width="100%" height="100%">
+                              <LineChart data={selectedWell.history}>
+                                <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
+                                <XAxis dataKey="month" stroke="var(--text-secondary)" tickFormatter={(m) => m.substring(5)} />
+                                <YAxis stroke="var(--secondary)" label={{ value: 'm³/month', angle: -90, position: 'insideLeft', fill: 'var(--secondary)' }} />
+                                <Tooltip />
+                                <Line type="monotone" dataKey="q" name={t.pumpingRate} stroke="var(--secondary)" strokeWidth={2} activeDot={{ r: 8 }} isAnimationActive={false} />
+                              </LineChart>
+                            </ResponsiveContainer>
+                          </div>
+                        </div>
+
+                        <div className="chart-card" style={{ border: '1px solid rgba(255,255,255,0.05)', borderRadius: '8px', padding: '16px' }}>
+                          <h4 style={{ fontSize: '15px', fontWeight: '600', marginBottom: '16px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                            <HelpCircle size={16} color="var(--warning)" />
+                            {t.correlation}: Q vs. WL
+                          </h4>
+                          <div style={{ height: '260px', width: '100%' }}>
+                            <ResponsiveContainer width="100%" height="100%">
+                              <ScatterChart>
+                                <CartesianGrid stroke="rgba(255,255,255,0.05)" />
+                                <XAxis type="number" dataKey="q" name={t.pumpingRate} label={{ value: 'Pumping Rate (m³/month)', position: 'insideBottom', offset: -5, fill: 'var(--text-secondary)' }} stroke="var(--text-secondary)" />
+                                <YAxis type="number" dataKey="wl" name={t.waterLevel} reversed label={{ value: 'Water Level WL (m)', angle: -90, position: 'insideLeft', fill: 'var(--text-secondary)' }} stroke="var(--text-secondary)" />
+                                <Tooltip cursor={{ strokeDasharray: '3 3' }} />
+                                <Scatter name="Correlation" data={correlationData} fill="var(--warning)" isAnimationActive={false} />
+                              </ScatterChart>
+                            </ResponsiveContainer>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  )
+                ) : (
+                  selectedAquifer && (
+                    <div className="glass-panel" style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
+                      {/* Aquifer Info Header */}
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '12px', borderBottom: '1px solid rgba(255,255,255,0.05)', paddingBottom: '16px' }}>
+                        <div>
+                          <h3 style={{ fontSize: '24px', fontWeight: '700', color: selectedAquiferId === 1 ? '#c084fc' : selectedAquiferId === 2 ? '#38bdf8' : '#10b981' }}>
+                            {selectedAquifer.name}
+                          </h3>
+                          <p style={{ color: 'var(--text-secondary)', fontSize: '14px' }}>
+                            {t.location}: {selectedAquifer.location} | Basin Type: <strong>{selectedAquifer.captiveType}</strong>
+                          </p>
+                        </div>
                         <div style={{ 
                           background: 'rgba(255,255,255,0.03)', border: '1px solid var(--panel-border)', 
-                          padding: '12px', borderRadius: '8px', fontSize: '12px', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px 16px' 
+                          padding: '12px 16px', borderRadius: '8px', fontSize: '13px', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px 24px' 
                         }}>
-                          <div><span style={{ color: 'var(--text-secondary)' }}>{t.aquifer}:</span> <strong>{selectedAquifer.name}</strong></div>
-                          <div><span style={{ color: 'var(--text-secondary)' }}>{t.aquiferType}:</span> <strong>{selectedAquifer.captiveType}</strong></div>
                           <div><span style={{ color: 'var(--text-secondary)' }}>Thickness (b):</span> <strong>{selectedAquifer.b} m</strong></div>
-                          <div><span style={{ color: 'var(--text-secondary)' }}>Conductivity (K):</span> <strong>{selectedAquifer.K} m/d</strong></div>
+                          <div><span style={{ color: 'var(--text-secondary)' }}>Hyd. Conductivity (K):</span> <strong>{selectedAquifer.K} m/d</strong></div>
+                          <div><span style={{ color: 'var(--text-secondary)' }}>Storativity (S):</span> <strong>{selectedAquifer.S}</strong></div>
+                          <div><span style={{ color: 'var(--text-secondary)' }}>Active Wells:</span> <strong>{wellsWithCoordinates.filter(w => w.aquiferId === selectedAquifer.id).length}</strong></div>
                         </div>
-                      )}
+                      </div>
+
+                      {/* Advanced Charts Grid */}
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: '24px' }}>
+                        {/* 1. Multi-well time series chart grouping history of the selected aquifer's wells */}
+                        <div className="chart-card" style={{ border: '1px solid rgba(255,255,255,0.05)', borderRadius: '8px', padding: '16px' }}>
+                          <h4 style={{ fontSize: '15px', fontWeight: '600', marginBottom: '16px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                            <Activity size={16} color={selectedAquiferId === 1 ? '#c084fc' : selectedAquiferId === 2 ? '#38bdf8' : '#10b981'} />
+                            {selectedAquifer.name} - Individual Wells Water Level (2024)
+                          </h4>
+                          <div style={{ height: '320px', width: '100%' }}>
+                            <ResponsiveContainer width="100%" height="100%">
+                              <LineChart data={selectedAquiferWellsHistory}>
+                                <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
+                                <XAxis dataKey="month" stroke="var(--text-secondary)" />
+                                <YAxis domain={['dataMin - 5', 'dataMax + 5']} reversed stroke="var(--text-secondary)" />
+                                <Tooltip />
+                                <Legend />
+                                {Object.keys(selectedAquiferWellsHistory[0] || {})
+                                  .filter(k => k !== 'month')
+                                  .map((wellName, idx) => {
+                                    const aqColor = selectedAquiferId === 1 ? '#c084fc' : selectedAquiferId === 2 ? '#38bdf8' : '#10b981';
+                                    // Generate different opacity/shades based on index
+                                    const opacities = [1, 0.7, 0.4, 0.8, 0.5];
+                                    const opacity = opacities[idx % opacities.length];
+                                    const isWellActive = selectedWell?.name === wellName;
+                                    return (
+                                      <Line 
+                                        key={wellName} 
+                                        type="monotone" 
+                                        dataKey={wellName} 
+                                        stroke={aqColor} 
+                                        strokeOpacity={opacity}
+                                        strokeWidth={isWellActive ? 3 : 1.5}
+                                        isAnimationActive={false} 
+                                      />
+                                    );
+                                  })
+                                }
+                              </LineChart>
+                            </ResponsiveContainer>
+                          </div>
+                          <p style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '8px', textAlign: 'center' }}>
+                            * Note: Thick line represents the active selection. Colors are matched to the active aquifer's signature theme.
+                          </p>
+                        </div>
+
+                        {/* 2. Aquifer Net Change Comparison Bar Chart */}
+                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(350px, 1fr))', gap: '20px' }}>
+                          <div className="chart-card" style={{ border: '1px solid rgba(255,255,255,0.05)', borderRadius: '8px', padding: '16px' }}>
+                            <h4 style={{ fontSize: '15px', fontWeight: '600', marginBottom: '16px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                              <TrendingDown size={16} color="var(--warning)" />
+                              Regional Aquifers: Net Forecast Drawdown (6-Month change, Δh)
+                            </h4>
+                            <div style={{ height: '260px', width: '100%' }}>
+                              <ResponsiveContainer width="100%" height="100%">
+                                <BarChart data={aquiferNetChangeData}>
+                                  <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
+                                  <XAxis dataKey="name" stroke="var(--text-secondary)" tick={{ fontSize: 10 }} />
+                                  <YAxis stroke="var(--text-secondary)" label={{ value: 'Net Change (m)', angle: -90, position: 'insideLeft', fill: 'var(--text-secondary)' }} />
+                                  <Tooltip formatter={(value) => [`${value} m`, 'Net Change']} />
+                                  <Bar dataKey="netChange" isAnimationActive={false}>
+                                    {aquiferNetChangeData.map((entry, index) => (
+                                      <Cell key={`cell-${index}`} fill={entry.color} />
+                                    ))}
+                                  </Bar>
+                                </BarChart>
+                              </ResponsiveContainer>
+                            </div>
+                          </div>
+
+                          {/* 3. Child Wells Net Change Comparison Bar Chart */}
+                          <div className="chart-card" style={{ border: '1px solid rgba(255,255,255,0.05)', borderRadius: '8px', padding: '16px' }}>
+                            <h4 style={{ fontSize: '15px', fontWeight: '600', marginBottom: '16px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                              <TrendingDown size={16} color="var(--warning)" />
+                              {selectedAquifer.name}: Child Wells Net Drawdown (6-Month change)
+                            </h4>
+                            <div style={{ height: '260px', width: '100%' }}>
+                              <ResponsiveContainer width="100%" height="100%">
+                                <BarChart data={wellNetChangeData}>
+                                  <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
+                                  <XAxis dataKey="name" stroke="var(--text-secondary)" />
+                                  <YAxis stroke="var(--text-secondary)" label={{ value: 'Net Change (m)', angle: -90, position: 'insideLeft', fill: 'var(--text-secondary)' }} />
+                                  <Tooltip formatter={(value) => [`${value} m`, 'Net Change']} />
+                                  <Bar dataKey="netChange" fill={selectedAquiferId === 1 ? '#c084fc' : selectedAquiferId === 2 ? '#38bdf8' : '#10b981'} isAnimationActive={false} />
+                                </BarChart>
+                              </ResponsiveContainer>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
                     </div>
-
-                    {/* Historical Charts grid */}
-                    <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: '24px' }}>
-                      {/* Water Table Depth over time */}
-                      <div className="chart-card" style={{ border: '1px solid rgba(255,255,255,0.05)', borderRadius: '8px', padding: '16px' }}>
-                        <h4 style={{ fontSize: '15px', fontWeight: '600', marginBottom: '16px', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                          <Activity size={16} color="var(--primary)" />
-                          {t.trend}: {t.waterLevel} (2024)
-                        </h4>
-                        <div style={{ height: '300px', width: '100%' }}>
-                          <ResponsiveContainer width="100%" height="100%">
-                            <AreaChart data={selectedWell.history}>
-                              <defs>
-                                <linearGradient id="wlColor" x1="0" y1="0" x2="0" y2="1">
-                                  <stop offset="5%" stopColor="var(--primary)" stopOpacity={0.3}/>
-                                  <stop offset="95%" stopColor="var(--primary)" stopOpacity={0.0}/>
-                                </linearGradient>
-                              </defs>
-                              <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
-                              <XAxis dataKey="month" stroke="var(--text-secondary)" tickFormatter={(m) => m.substring(5)} />
-                              <YAxis domain={['dataMin - 2', 'dataMax + 2']} reversed stroke="var(--text-secondary)" />
-                              <Tooltip />
-                              <Area type="monotone" dataKey="wl" name={t.waterLevel} stroke="var(--primary)" fillOpacity={1} fill="url(#wlColor)" strokeWidth={2} isAnimationActive={false} />
-                            </AreaChart>
-                          </ResponsiveContainer>
-                        </div>
-                        <p style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '8px', textAlign: 'center' }}>
-                          * Note: Y-axis is reversed because water table depth measures distance from surface down to water. A lower line means higher water table.
-                        </p>
-                      </div>
-
-                      {/* Pumping Rate Q and Recharge R over time */}
-                      <div className="chart-card" style={{ border: '1px solid rgba(255,255,255,0.05)', borderRadius: '8px', padding: '16px' }}>
-                        <h4 style={{ fontSize: '15px', fontWeight: '600', marginBottom: '16px', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                          <Droplet size={16} color="var(--secondary)" />
-                          {t.pumpingRate} {selectedDataset === 'advanced' ? `& ${t.recharge}` : ''} (2024)
-                        </h4>
-                        <div style={{ height: '300px', width: '100%' }}>
-                          <ResponsiveContainer width="100%" height="100%">
-                            <LineChart data={selectedWell.history}>
-                              <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
-                              <XAxis dataKey="month" stroke="var(--text-secondary)" tickFormatter={(m) => m.substring(5)} />
-                              <YAxis yAxisId="left" stroke="var(--secondary)" label={{ value: 'm³/month', angle: -90, position: 'insideLeft', fill: 'var(--secondary)' }} />
-                              {selectedDataset === 'advanced' && (
-                                <YAxis yAxisId="right" orientation="right" stroke="var(--success)" label={{ value: 'm/month', angle: 90, position: 'insideRight', fill: 'var(--success)' }} />
-                              )}
-                              <Tooltip />
-                              <Legend />
-                              <Line yAxisId="left" type="monotone" dataKey="q" name={t.pumpingRate} stroke="var(--secondary)" strokeWidth={2} activeDot={{ r: 8 }} isAnimationActive={false} />
-                              {selectedDataset === 'advanced' && (
-                                <Line yAxisId="right" type="monotone" dataKey="r" name={t.recharge} stroke="var(--success)" strokeWidth={2} isAnimationActive={false} />
-                              )}
-                            </LineChart>
-                          </ResponsiveContainer>
-                        </div>
-                      </div>
-
-                      {/* Correlation Scatter/Line Chart */}
-                      <div className="chart-card" style={{ border: '1px solid rgba(255,255,255,0.05)', borderRadius: '8px', padding: '16px' }}>
-                        <h4 style={{ fontSize: '15px', fontWeight: '600', marginBottom: '16px', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                          <HelpCircle size={16} color="var(--warning)" />
-                          {t.correlation}: Q vs. WL
-                        </h4>
-                        <div style={{ height: '260px', width: '100%' }}>
-                          <ResponsiveContainer width="100%" height="100%">
-                            <ScatterChart>
-                              <CartesianGrid stroke="rgba(255,255,255,0.05)" />
-                              <XAxis type="number" dataKey="q" name={t.pumpingRate} label={{ value: 'Pumping Rate (m³/month)', position: 'insideBottom', offset: -5, fill: 'var(--text-secondary)' }} stroke="var(--text-secondary)" />
-                              <YAxis type="number" dataKey="wl" name={t.waterLevel} reversed label={{ value: 'Water Level WL (m)', angle: -90, position: 'insideLeft', fill: 'var(--text-secondary)' }} stroke="var(--text-secondary)" />
-                              <Tooltip cursor={{ strokeDasharray: '3 3' }} />
-                              <Scatter name="Correlation" data={correlationData} fill="var(--warning)" isAnimationActive={false} />
-                            </ScatterChart>
-                          </ResponsiveContainer>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
+                  )
                 )}
               </div>
             </div>
@@ -2046,7 +2534,7 @@ export default function App() {
               }}>
                 <div>
                   <h1 style={{ fontSize: '24px', fontWeight: '800', color: 'var(--primary)', margin: 0 }}>
-                    {selectedLanguage === 'ar' ? 'منصة جيومائية - GeoWater' : selectedLanguage === 'fr' ? 'Plateforme GeoWater' : 'GeoWater Platform'}
+                    {selectedLanguage === 'ar' ? 'منصة جيومائية - GeoWaterics' : selectedLanguage === 'fr' ? 'Plateforme GeoWaterics' : 'GeoWaterics Platform'}
                   </h1>
                   <p style={{ fontSize: '12px', color: 'var(--text-secondary)', margin: '6px 0 0 0' }}>
                     {selectedLanguage === 'ar' ? 'تقرير التنبؤ الذكي واستدامة المياه الجوفية' : selectedLanguage === 'fr' ? 'Rapport de Prévision IA & de Durabilité des Nappes' : 'AI-Powered Groundwater Level Forecasting & Sustainability Report'}
@@ -2054,8 +2542,11 @@ export default function App() {
                 </div>
                 <div style={{ textAlign: 'right', fontSize: '11px', color: 'var(--text-muted)', lineHeight: '1.4' }}>
                   <div><strong>{selectedLanguage === 'ar' ? 'التاريخ' : selectedLanguage === 'fr' ? 'Date' : 'Date'}:</strong> {new Date().toLocaleDateString()}</div>
-                  <div><strong>{selectedLanguage === 'ar' ? 'نموذج التنبؤ' : selectedLanguage === 'fr' ? 'Modèle' : 'Model'}:</strong> {selectedDataset === 'advanced' ? 'Advanced' : 'Standard'}</div>
-                  <div><strong>{selectedLanguage === 'ar' ? 'البئر' : selectedLanguage === 'fr' ? 'Puits' : 'Well'}:</strong> {selectedWell?.name} ({selectedWell?.location})</div>
+                  <div><strong>{selectedLanguage === 'ar' ? 'نموذج التنبؤ' : selectedLanguage === 'fr' ? 'Modèle' : 'Model'}:</strong> {selectedDataset === 'advanced' ? 'Advanced (Per-Aquifer)' : 'Standard'}</div>
+                  <div><strong>{selectedDataset === 'advanced' 
+                    ? (selectedLanguage === 'ar' ? 'الطبقة المائية' : selectedLanguage === 'fr' ? 'Aquifère' : 'Aquifer')
+                    : (selectedLanguage === 'ar' ? 'البئر' : selectedLanguage === 'fr' ? 'Puits' : 'Well')
+                  }:</strong> {selectedDataset === 'advanced' && selectedAquifer ? `${selectedAquifer.name} (${selectedAquifer.location})` : `${selectedWell?.name} (${selectedWell?.location})`}</div>
                 </div>
               </div>
             )}
@@ -2118,30 +2609,64 @@ export default function App() {
                     </button>
                   </div>
 
-                  {/* Well Selector Dropdown */}
+                  {/* Selector Dropdown (Aquifer in advanced, Well in standard) */}
                   <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                    <label htmlFor="well-select-ai" style={{ fontSize: '12px', color: 'var(--text-secondary)', fontWeight: '500' }}>
-                      {t.selectWellAI || 'Select Well'}:
-                    </label>
-                    <select
-                      id="well-select-ai"
-                      value={selectedWellId}
-                      onChange={(e) => setSelectedWellId(Number(e.target.value))}
-                      className="form-select"
-                      style={{
-                        padding: '8px 12px',
-                        fontSize: '13px',
-                        borderRadius: '8px',
-                        cursor: 'pointer',
-                        minWidth: '160px',
-                      }}
-                    >
-                      {wells.map(w => (
-                        <option key={w.id} value={w.id}>
-                          {w.name} ({w.location})
-                        </option>
-                      ))}
-                    </select>
+                    {selectedDataset === 'advanced' ? (
+                      <>
+                        <label htmlFor="aquifer-select-ai" style={{ fontSize: '12px', color: 'var(--text-secondary)', fontWeight: '500' }}>
+                          {selectedLanguage === 'ar' ? 'اختر الطبقة المائية' : selectedLanguage === 'fr' ? 'Sélectionner Aquifère' : 'Select Aquifer'}:
+                        </label>
+                        <select
+                          id="aquifer-select-ai"
+                          value={selectedAquiferId}
+                          onChange={(e) => {
+                            const aqId = Number(e.target.value);
+                            setSelectedAquiferId(aqId);
+                            const firstWell = advancedWells.find(w => w.aquiferId === aqId);
+                            if (firstWell) setSelectedWellId(firstWell.id);
+                          }}
+                          className="form-select"
+                          style={{
+                            padding: '8px 12px',
+                            fontSize: '13px',
+                            borderRadius: '8px',
+                            cursor: 'pointer',
+                            minWidth: '160px',
+                          }}
+                        >
+                          {advancedAquifers.map(aq => (
+                            <option key={aq.id} value={aq.id}>
+                              {aq.name} ({aq.location})
+                            </option>
+                          ))}
+                        </select>
+                      </>
+                    ) : (
+                      <>
+                        <label htmlFor="well-select-ai" style={{ fontSize: '12px', color: 'var(--text-secondary)', fontWeight: '500' }}>
+                          {t.selectWellAI || 'Select Well'}:
+                        </label>
+                        <select
+                          id="well-select-ai"
+                          value={selectedWellId}
+                          onChange={(e) => setSelectedWellId(Number(e.target.value))}
+                          className="form-select"
+                          style={{
+                            padding: '8px 12px',
+                            fontSize: '13px',
+                            borderRadius: '8px',
+                            cursor: 'pointer',
+                            minWidth: '160px',
+                          }}
+                        >
+                          {wells.map(w => (
+                            <option key={w.id} value={w.id}>
+                              {w.name} ({w.location})
+                            </option>
+                          ))}
+                        </select>
+                      </>
+                    )}
                   </div>
 
                   {/* Download PDF Button */}
@@ -2216,7 +2741,7 @@ export default function App() {
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px', flexWrap: 'wrap', gap: '16px' }}>
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
                       <h3 style={{ fontSize: '16px', fontWeight: '600', margin: 0 }}>
-                        {t.forecast6m} : {selectedWell?.name}
+                        {t.forecast6m} : {selectedDataset === 'advanced' && selectedAquifer ? selectedAquifer.name : selectedWell?.name}
                       </h3>
                       <p style={{ fontSize: '11px', color: 'var(--text-secondary)', margin: 0 }}>
                         {activeForecastMetric === 'wl' ? t.wlForecast : activeForecastMetric === 'drawdown' ? t.drawdownForecast : t.predictedSaturatedHead}
@@ -2374,20 +2899,20 @@ export default function App() {
                     <strong style={{ fontSize: '14px' }}>{t.accuracyMeter}</strong>
                   </div>
 
-                  {forecastResult && (
+                  {currentForecastResult && (
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
                       {/* Blended / Hybrid Model */}
                       <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
                         <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px' }}>
                           <span style={{ color: 'var(--text-secondary)' }}>{t.hybridModel}</span>
                           <span style={{ fontWeight: 'bold', color: 'var(--primary)' }}>
-                            {forecastResult.metrics.wl.accuracyPercent}%
+                            {currentForecastResult.metrics.wl.accuracyPercent}%
                           </span>
                         </div>
                         <div style={{ width: '100%', height: '6px', background: 'rgba(255,255,255,0.05)', borderRadius: '3px', overflow: 'hidden' }}>
                           <div 
                             style={{ 
-                              width: `${forecastResult.metrics.wl.accuracyPercent}%`, 
+                              width: `${currentForecastResult.metrics.wl.accuracyPercent}%`, 
                               height: '100%', 
                               background: 'linear-gradient(90deg, var(--primary), var(--secondary))',
                               borderRadius: '3px'
@@ -2395,9 +2920,9 @@ export default function App() {
                           />
                         </div>
                         <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '10px', color: 'var(--text-muted)' }}>
-                          <span>R²: {forecastResult.metrics.wl.rSquared}</span>
-                          <span>MAE: {forecastResult.metrics.wl.mae}m</span>
-                          <span>MSE: {forecastResult.metrics.wl.mse}m²</span>
+                          <span>R²: {currentForecastResult.metrics.wl.rSquared}</span>
+                          <span>MAE: {currentForecastResult.metrics.wl.mae}m</span>
+                          <span>MSE: {currentForecastResult.metrics.wl.mse}m²</span>
                         </div>
                       </div>
 
@@ -2406,13 +2931,13 @@ export default function App() {
                         <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px' }}>
                           <span style={{ color: 'var(--text-secondary)' }}>{t.aiModel}</span>
                           <span style={{ fontWeight: 'bold', color: 'var(--secondary)' }}>
-                            {forecastResult.metrics.wlAI.accuracyPercent}%
+                            {currentForecastResult.metrics.wlAI.accuracyPercent}%
                           </span>
                         </div>
                         <div style={{ width: '100%', height: '6px', background: 'rgba(255,255,255,0.05)', borderRadius: '3px', overflow: 'hidden' }}>
                           <div 
                             style={{ 
-                              width: `${forecastResult.metrics.wlAI.accuracyPercent}%`, 
+                              width: `${currentForecastResult.metrics.wlAI.accuracyPercent}%`, 
                               height: '100%', 
                               background: 'var(--secondary)',
                               borderRadius: '3px'
@@ -2420,9 +2945,9 @@ export default function App() {
                           />
                         </div>
                         <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '10px', color: 'var(--text-muted)' }}>
-                          <span>R²: {forecastResult.metrics.wlAI.rSquared}</span>
-                          <span>MAE: {forecastResult.metrics.wlAI.mae}m</span>
-                          <span>MSE: {forecastResult.metrics.wlAI.mse}m²</span>
+                          <span>R²: {currentForecastResult.metrics.wlAI.rSquared}</span>
+                          <span>MAE: {currentForecastResult.metrics.wlAI.mae}m</span>
+                          <span>MSE: {currentForecastResult.metrics.wlAI.mse}m²</span>
                         </div>
                       </div>
 
@@ -2431,13 +2956,13 @@ export default function App() {
                         <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px' }}>
                           <span style={{ color: 'var(--text-secondary)' }}>{t.analyticalModel}</span>
                           <span style={{ fontWeight: 'bold', color: 'var(--success)' }}>
-                            {forecastResult.metrics.wlAnalytical.accuracyPercent}%
+                            {currentForecastResult.metrics.wlAnalytical.accuracyPercent}%
                           </span>
                         </div>
                         <div style={{ width: '100%', height: '6px', background: 'rgba(255,255,255,0.05)', borderRadius: '3px', overflow: 'hidden' }}>
                           <div 
                             style={{ 
-                              width: `${forecastResult.metrics.wlAnalytical.accuracyPercent}%`, 
+                              width: `${currentForecastResult.metrics.wlAnalytical.accuracyPercent}%`, 
                               height: '100%', 
                               background: 'var(--success)',
                               borderRadius: '3px'
@@ -2445,9 +2970,9 @@ export default function App() {
                           />
                         </div>
                         <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '10px', color: 'var(--text-muted)' }}>
-                          <span>R²: {forecastResult.metrics.wlAnalytical.rSquared}</span>
-                          <span>MAE: {forecastResult.metrics.wlAnalytical.mae}m</span>
-                          <span>MSE: {forecastResult.metrics.wlAnalytical.mse}m²</span>
+                          <span>R²: {currentForecastResult.metrics.wlAnalytical.rSquared}</span>
+                          <span>MAE: {currentForecastResult.metrics.wlAnalytical.mae}m</span>
+                          <span>MSE: {currentForecastResult.metrics.wlAnalytical.mse}m²</span>
                         </div>
                       </div>
                     </div>
@@ -2534,7 +3059,7 @@ export default function App() {
               <div style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>
                 <p>Location Context: Tébessa, North Algeria (EPSG:30791 - Lambert Conic Conformal Zone Nord)</p>
                 <p style={{ marginTop: '4px' }}>AI Predictive Model: Ridge Regularized Polynomial Projection</p>
-                <p style={{ marginTop: '4px' }}>GeoWater Hydrological Dashboard © 2026. Made in pair with DeepMind AI.</p>
+                <p style={{ marginTop: '4px' }}>GeoWaterics Hydrological Dashboard © 2026. Made in pair with DeepMind AI.</p>
               </div>
             </div>
           </div>

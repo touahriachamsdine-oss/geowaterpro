@@ -328,6 +328,185 @@ export function trainAndForecast(
   };
 }
 
+export interface AquiferForecastResult {
+  forecastPoints: ForecastPoint[];
+  historyFits: {
+    month: string;
+    q: number;
+    r?: number;
+    wl: number;
+    drawdown: number;
+    wlAnalytical: number;
+    drawdownAnalytical: number;
+    wlAI: number;
+    drawdownAI: number;
+  }[];
+  metrics: {
+    q: ModelMetrics;
+    r?: ModelMetrics;
+    wl: ModelMetrics;
+    wlAnalytical: ModelMetrics;
+    wlAI: ModelMetrics;
+  };
+}
+
+export function getAquiferForecast(
+  wellsInAquifer: { id: number; history: HistoryPoint[] }[],
+  scenario: ForecastScenario,
+  forecastMonthsCount: number = 6,
+  aquiferK?: number,
+  aquiferb?: number,
+  aquiferS?: number
+): AquiferForecastResult {
+  if (wellsInAquifer.length === 0) {
+    throw new Error('No wells in aquifer');
+  }
+
+  const wellResults = wellsInAquifer.map(w => 
+    trainAndForecast(w.history, scenario, forecastMonthsCount, aquiferK, aquiferb, aquiferS)
+  );
+
+  const numWells = wellsInAquifer.length;
+  const historyLen = wellsInAquifer[0].history.length;
+
+  const aggregatedHistoryFits = Array.from({ length: historyLen }, (_, i) => {
+    let sumQ = 0;
+    let sumR = 0;
+    let sumWl = 0;
+    let sumWlAnalytical = 0;
+    let sumWlAI = 0;
+
+    wellResults.forEach(r => {
+      const hf = r.historyFits[i];
+      sumQ += hf.q;
+      if (hf.r !== undefined) sumR += hf.r;
+      sumWl += hf.wl;
+      sumWlAnalytical += hf.wlAnalytical;
+      sumWlAI += hf.wlAI;
+    });
+
+    const month = wellResults[0].historyFits[i].month;
+    const avgQ = sumQ / numWells;
+    const avgR = sumR / numWells;
+    const avgWl = sumWl / numWells;
+    const avgWlAnalytical = sumWlAnalytical / numWells;
+    const avgWlAI = sumWlAI / numWells;
+
+    const avgInitialWl = wellsInAquifer.reduce((sum, w) => sum + w.history[0].wl, 0) / numWells;
+
+    return {
+      month,
+      q: parseFloat(avgQ.toFixed(1)),
+      r: wellsInAquifer[0].history[0].r !== undefined ? parseFloat(avgR.toFixed(4)) : undefined,
+      wl: parseFloat(avgWl.toFixed(2)),
+      drawdown: parseFloat((avgWl - avgInitialWl).toFixed(2)),
+      wlAnalytical: parseFloat(avgWlAnalytical.toFixed(2)),
+      drawdownAnalytical: parseFloat((avgWlAnalytical - avgInitialWl).toFixed(2)),
+      wlAI: parseFloat(avgWlAI.toFixed(2)),
+      drawdownAI: parseFloat((avgWlAI - avgInitialWl).toFixed(2))
+    };
+  });
+
+  const aggregatedForecastPoints = Array.from({ length: forecastMonthsCount }, (_, i) => {
+    let sumQ = 0;
+    let sumR = 0;
+    let sumWlAI = 0;
+    let sumWlAnalytical = 0;
+
+    wellResults.forEach(r => {
+      const fp = r.forecastPoints[i];
+      sumQ += fp.q;
+      if (fp.r !== undefined) sumR += fp.r;
+      sumWlAI += fp.wlAI;
+      sumWlAnalytical += fp.wlAnalytical;
+    });
+
+    const month = wellResults[0].forecastPoints[i].month;
+    const avgQ = sumQ / numWells;
+    const avgR = sumR / numWells;
+    const avgWlAI = sumWlAI / numWells;
+    const avgWlAnalytical = sumWlAnalytical / numWells;
+
+    const avgWl = (avgWlAnalytical + avgWlAI) / 2;
+
+    const avgInitialWl = wellsInAquifer.reduce((sum, w) => sum + w.history[0].wl, 0) / numWells;
+
+    return {
+      month,
+      wl: parseFloat(avgWl.toFixed(2)),
+      drawdown: parseFloat((avgWl - avgInitialWl).toFixed(2)),
+      wlAnalytical: parseFloat(avgWlAnalytical.toFixed(2)),
+      drawdownAnalytical: parseFloat((avgWlAnalytical - avgInitialWl).toFixed(2)),
+      wlAI: parseFloat(avgWlAI.toFixed(2)),
+      drawdownAI: parseFloat((avgWlAI - avgInitialWl).toFixed(2)),
+      q: Math.round(avgQ),
+      r: wellsInAquifer[0].history[0].r !== undefined ? parseFloat(avgR.toFixed(4)) : undefined
+    };
+  });
+
+  const actualWLs = Array.from({ length: historyLen }, (_, i) => {
+    const sumActualWl = wellsInAquifer.reduce((sum, w) => sum + w.history[i].wl, 0);
+    return sumActualWl / numWells;
+  });
+
+  const getMetricsForSeries = (predSeries: number[]): ModelMetrics => {
+    const r2 = calculateRSquared(actualWLs, predSeries);
+    const mae = actualWLs.reduce((sum, val, idx) => sum + Math.abs(val - predSeries[idx]), 0) / historyLen;
+    const mse = actualWLs.reduce((sum, val, idx) => sum + Math.pow(val - predSeries[idx], 2), 0) / historyLen;
+    const accuracyPercent = calculateAccuracyPercent(actualWLs, predSeries);
+    return {
+      rSquared: parseFloat(r2.toFixed(3)),
+      mae: parseFloat(mae.toFixed(3)),
+      mse: parseFloat(mse.toFixed(3)),
+      accuracyPercent: parseFloat(accuracyPercent.toFixed(1))
+    };
+  };
+
+  const hybridWLs = aggregatedHistoryFits.map(hf => hf.wl);
+  const aiWLs = aggregatedHistoryFits.map(hf => hf.wlAI);
+  const analyticalWLs = aggregatedHistoryFits.map(hf => hf.wlAnalytical);
+
+  const hybridMetrics = getMetricsForSeries(hybridWLs);
+  const aiMetrics = getMetricsForSeries(aiWLs);
+  const analyticalMetrics = getMetricsForSeries(analyticalWLs);
+
+  const qRSquared = wellResults.reduce((sum, r) => sum + r.metrics.q.rSquared, 0) / numWells;
+  const qMae = wellResults.reduce((sum, r) => sum + r.metrics.q.mae, 0) / numWells;
+  const qMse = wellResults.reduce((sum, r) => sum + r.metrics.q.mse, 0) / numWells;
+  const qAccuracy = wellResults.reduce((sum, r) => sum + r.metrics.q.accuracyPercent, 0) / numWells;
+
+  let rMetrics: ModelMetrics | undefined;
+  if (wellsInAquifer[0].history[0].r !== undefined) {
+    const rRSquared = wellResults.reduce((sum, r) => sum + (r.metrics.r?.rSquared || 0), 0) / numWells;
+    const rMae = wellResults.reduce((sum, r) => sum + (r.metrics.r?.mae || 0), 0) / numWells;
+    const rMse = wellResults.reduce((sum, r) => sum + (r.metrics.r?.mse || 0), 0) / numWells;
+    const rAccuracy = wellResults.reduce((sum, r) => sum + (r.metrics.r?.accuracyPercent || 0), 0) / numWells;
+    rMetrics = {
+      rSquared: parseFloat(rRSquared.toFixed(3)),
+      mae: parseFloat(rMae.toFixed(3)),
+      mse: parseFloat(rMse.toFixed(3)),
+      accuracyPercent: parseFloat(rAccuracy.toFixed(1))
+    };
+  }
+
+  return {
+    forecastPoints: aggregatedForecastPoints,
+    historyFits: aggregatedHistoryFits,
+    metrics: {
+      q: {
+        rSquared: parseFloat(qRSquared.toFixed(3)),
+        mae: parseFloat(qMae.toFixed(3)),
+        mse: parseFloat(qMse.toFixed(3)),
+        accuracyPercent: parseFloat(qAccuracy.toFixed(1))
+      },
+      r: rMetrics,
+      wl: hybridMetrics,
+      wlAI: aiMetrics,
+      wlAnalytical: analyticalMetrics
+    }
+  };
+}
+
 // Scenarios definition
 export const SCENARIOS: ForecastScenario[] = [
   {

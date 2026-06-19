@@ -178,7 +178,7 @@ export type LanguageCode = 'en' | 'ar' | 'fr';
 
 export const translations: Record<LanguageCode, TranslationSet> = {
   en: {
-    title: 'GeoWater Platform',
+    title: 'GeoWaterics Platform',
     subtitle: 'Groundwater Monitoring, Analytical Modeling & AI Forecasting',
     tabDashboard: 'Overview & Charts',
     tabMap: 'Interactive Map',
@@ -333,7 +333,7 @@ export const translations: Record<LanguageCode, TranslationSet> = {
     accuracyBlended: 'Blended Accuracy Score',
     technicalSpecs: 'Technical Specifications',
     specDoc: 'Technical Specifications Document',
-    loginTitle: 'GeoWater Platform Login',
+    loginTitle: 'GeoWaterics Platform Login',
     loginSubtitle: 'Enter credentials or use quick select to access dashboard tools.',
     username: 'Username',
     password: 'Password',
@@ -347,7 +347,7 @@ export const translations: Record<LanguageCode, TranslationSet> = {
     locked: 'Locked'
   },
   ar: {
-    title: 'منصة جيومائية - GeoWater',
+    title: 'منصة جيومائية - GeoWaterics',
     subtitle: 'مراقبة المياه الجوفية، النمذجة التحليلية والتنبؤ بالذكاء الاصطناعي',
     tabDashboard: 'نظرة عامة ورسوم بيانية',
     tabMap: 'الخريطة التفاعلية',
@@ -502,7 +502,7 @@ export const translations: Record<LanguageCode, TranslationSet> = {
     accuracyBlended: 'معدل الدقة المشترك',
     technicalSpecs: 'المواصفات الفنية',
     specDoc: 'وثيقة المواصفات الفنية للمنصة',
-    loginTitle: 'تسجيل الدخول إلى منصة GeoWater',
+    loginTitle: 'تسجيل الدخول إلى منصة GeoWaterics',
     loginSubtitle: 'أدخل بيانات الاعتماد أو استخدم الدخول السريع للوصول إلى أدوات المنصة.',
     username: 'اسم المستخدم',
     password: 'كلمة المرور',
@@ -516,7 +516,7 @@ export const translations: Record<LanguageCode, TranslationSet> = {
     locked: 'مغلق'
   },
   fr: {
-    title: 'Plateforme GeoWater',
+    title: 'Plateforme GeoWaterics',
     subtitle: 'Suivi des Nappes, Modélisation Analytique & Prédictions IA',
     tabDashboard: 'Aperçu & Graphiques',
     tabMap: 'Carte Interactive',
@@ -671,7 +671,7 @@ export const translations: Record<LanguageCode, TranslationSet> = {
     accuracyBlended: 'Précision Globale Combinée',
     technicalSpecs: 'Spécifications Techniques',
     specDoc: 'Document des Spécifications Techniques',
-    loginTitle: 'Connexion Plateforme GeoWater',
+    loginTitle: 'Connexion Plateforme GeoWaterics',
     loginSubtitle: 'Saisissez vos identifiants ou utilisez la sélection rapide pour accéder aux outils.',
     username: "Nom d'utilisateur",
     password: 'Mot de passe',
