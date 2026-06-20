@@ -565,38 +565,48 @@ export default function App() {
     if (selectedDataset !== 'advanced' || !selectedAquifer) return null;
     const wellsInAquifer = advancedWells.filter(w => w.aquiferId === selectedAquifer.id);
     if (wellsInAquifer.length === 0) return null;
-    return getAquiferForecast(
-      wellsInAquifer,
-      currentForecastScenario,
-      6,
-      selectedAquifer.K,
-      selectedAquifer.b,
-      selectedAquifer.S
-    );
+    try {
+      return getAquiferForecast(
+        wellsInAquifer,
+        currentForecastScenario,
+        6,
+        selectedAquifer.K,
+        selectedAquifer.b,
+        selectedAquifer.S
+      );
+    } catch (err) {
+      console.error('Aquifer forecast computation error:', err);
+      return null;
+    }
   }, [selectedDataset, selectedAquifer, currentForecastScenario, advancedWells]);
 
   const forecastResult = useMemo(() => {
-    if (!selectedWell) return null;
-    if (selectedDataset === 'advanced') {
+    if (!selectedWell || !selectedWell.history || selectedWell.history.length === 0) return null;
+    try {
+      if (selectedDataset === 'advanced') {
+        return trainAndForecast(
+          selectedWell.history,
+          currentForecastScenario,
+          6,
+          selectedAquifer?.K,
+          selectedAquifer?.b,
+          selectedAquifer?.S
+        );
+      }
       return trainAndForecast(
         selectedWell.history,
         currentForecastScenario,
-        6,
-        selectedAquifer?.K,
-        selectedAquifer?.b,
-        selectedAquifer?.S
+        6
       );
+    } catch (err) {
+      console.error('Forecast computation error:', err);
+      return null;
     }
-    return trainAndForecast(
-      selectedWell.history,
-      currentForecastScenario,
-      6
-    );
   }, [selectedWell, currentForecastScenario, selectedAquifer, selectedDataset]);
 
   const currentForecastResult = useMemo(() => {
     if (selectedDataset === 'advanced') {
-      return aquiferForecastResult;
+      return aquiferForecastResult || forecastResult;
     }
     return forecastResult;
   }, [selectedDataset, aquiferForecastResult, forecastResult]);
