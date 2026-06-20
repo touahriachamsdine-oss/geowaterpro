@@ -1,8 +1,9 @@
 import { useState, useRef } from 'react';
 import * as XLSX from 'xlsx';
-import { Upload, Download, AlertTriangle, CheckCircle, FileText, ChevronDown } from 'lucide-react';
+import { Upload, Download, AlertTriangle, CheckCircle, FileText, ChevronDown, Cpu, Sparkles } from 'lucide-react';
 import { trainAndForecast, getAquiferForecast, SCENARIOS } from '../utils/forecasting';
 import type { ForecastResult, AquiferForecastResult } from '../utils/forecasting';
+import { parseWithGroqAI, getAIAnalysisSummary } from '../utils/groqAI';
 import { ResponsiveContainer, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend } from 'recharts';
 
 // ── Types ──────────────────────────────────────────────────────────────────
@@ -66,6 +67,14 @@ export default function UploadAnalyze({ userRole, selectedLanguage: _selectedLan
   const [fileName, setFileName] = useState('');
   const [showBatchSummary, setShowBatchSummary] = useState(false);
 
+  // Groq AI State hooks
+  const [isAiParsing, setIsAiParsing] = useState(false);
+  const [aiSummary, setAiSummary] = useState('');
+  const [aiMappings, setAiMappings] = useState('');
+  const [aiWarnings, setAiWarnings] = useState<string[]>([]);
+  const [aiAnalysisSummary, setAiAnalysisSummary] = useState('');
+  const [isAiAnalyzing, setIsAiAnalyzing] = useState(false);
+
   const scenario = SCENARIOS.find(s => s.id === 'normal')!;
 
   // ── Parse xlsx ──────────────────────────────────────────────────────────
@@ -77,71 +86,138 @@ export default function UploadAnalyze({ userRole, selectedLanguage: _selectedLan
     setWellResults([]);
     setSelectedId(null);
     setShowBatchSummary(false);
+    setAiSummary('');
+    setAiMappings('');
+    setAiWarnings([]);
+    setAiAnalysisSummary('');
 
     const reader = new FileReader();
-    reader.onload = (e) => {
+    reader.onload = async (e) => {
       try {
         const wb = XLSX.read(e.target!.result, { type: 'binary' });
         const ws = wb.Sheets[wb.SheetNames[0]];
         const rows: Record<string, string | number>[] = XLSX.utils.sheet_to_json(ws, { defval: '' });
 
-        const errors: ParseError[] = [];
-        const requiredCols = mode === 'advanced' ? ADVANCED_COLS : SIMPLE_COLS;
-        if (rows.length === 0) { errors.push({ row: 0, message: 'File is empty.' }); setParseErrors(errors); return; }
-
-        const missing = requiredCols.filter(c => !(c in rows[0]));
-        if (missing.length > 0) {
-          errors.push({ row: 1, message: `Missing columns: ${missing.join(', ')}` });
-          setParseErrors(errors);
+        if (rows.length === 0) {
+          setParseErrors([{ row: 0, message: 'File is empty.' }]);
           return;
         }
 
-        // Group by well
-        const wellMap = new Map<string, UploadedWell>();
-        let wellIdCounter = 1;
+        const parseLocally = (dataRows: Record<string, string | number>[]) => {
+          const errors: ParseError[] = [];
+          const wellMap = new Map<string, UploadedWell>();
+          let wellIdCounter = 1;
 
-        rows.forEach((row, i) => {
-          const rowNum = i + 2;
-          const name = String(row.well_name || '').trim();
-          const location = String(row.location || '').trim();
-          const month = String(row.month || '').trim();
-          const wl = Number(row.wl);
-          const q = Number(row.q);
+          dataRows.forEach((row, i) => {
+            const rowNum = i + 2;
+            const name = String(row.well_name || '').trim();
+            const location = String(row.location || '').trim();
+            const month = String(row.month || '').trim();
+            const wl = Number(row.wl);
+            const q = Number(row.q);
 
-          if (!name) { errors.push({ row: rowNum, message: 'well_name is empty' }); return; }
-          if (!/^\d{4}\/\d{2}$/.test(month)) { errors.push({ row: rowNum, message: `month "${month}" must be YYYY/MM` }); return; }
-          if (isNaN(wl) || wl < 0) { errors.push({ row: rowNum, message: `wl invalid at row ${rowNum}` }); return; }
-          if (isNaN(q) || q < 0) { errors.push({ row: rowNum, message: `q invalid at row ${rowNum}` }); return; }
+            if (!name) { errors.push({ row: rowNum, message: 'well_name is empty' }); return; }
+            if (!/^\d{4}\/\d{2}$/.test(month)) { errors.push({ row: rowNum, message: `month "${month}" must be YYYY/MM` }); return; }
+            if (isNaN(wl) || wl < 0) { errors.push({ row: rowNum, message: `wl invalid at row ${rowNum}` }); return; }
+            if (isNaN(q) || q < 0) { errors.push({ row: rowNum, message: `q invalid at row ${rowNum}` }); return; }
 
-          const key = name;
-          if (!wellMap.has(key)) {
-            const aqId = mode === 'advanced' ? Number(row.aquifer_id) || 1 : 1;
-            const aqName = mode === 'advanced' ? String(row.aquifer_name || 'Aquifer 1').trim() : 'Aquifer 1';
-            const K = mode === 'advanced' ? Number(row.K) || 10 : undefined;
-            const b = mode === 'advanced' ? Number(row.b) || 50 : undefined;
-            const S = mode === 'advanced' ? Number(row.S) || 0.005 : undefined;
-            wellMap.set(key, { id: wellIdCounter++, name, location, aquiferId: aqId, aquiferName: aqName, K, b, S, history: [] });
+            const key = name;
+            if (!wellMap.has(key)) {
+              const aqId = mode === 'advanced' ? Number(row.aquifer_id) || 1 : 1;
+              const aqName = mode === 'advanced' ? String(row.aquifer_name || 'Aquifer 1').trim() : 'Aquifer 1';
+              const K = mode === 'advanced' ? Number(row.K) || 10 : undefined;
+              const b = mode === 'advanced' ? Number(row.b) || 50 : undefined;
+              const S = mode === 'advanced' ? Number(row.S) || 0.005 : undefined;
+              wellMap.set(key, { id: wellIdCounter++, name, location, aquiferId: aqId, aquiferName: aqName, K, b, S, history: [] });
+            }
+
+            const r = mode === 'advanced' ? Number(row.r) || 0 : undefined;
+            wellMap.get(key)!.history.push({ month, q, r, wl });
+          });
+
+          if (errors.length > 0) { setParseErrors(errors); return; }
+
+          const wells: UploadedWell[] = [];
+          wellMap.forEach(w => {
+            if (w.history.length < 3) {
+              errors.push({ row: 0, message: `Well "${w.name}" has only ${w.history.length} history rows (min 3 required).` });
+            } else {
+              w.history.sort((a, b) => a.month.localeCompare(b.month));
+              wells.push(w);
+            }
+          });
+
+          if (errors.length > 0) { setParseErrors(errors); return; }
+          setUploadedWells(wells);
+        };
+
+        const requiredCols = mode === 'advanced' ? ADVANCED_COLS : SIMPLE_COLS;
+        const missing = requiredCols.filter(c => !(c in rows[0]));
+
+        if (missing.length === 0) {
+          parseLocally(rows);
+        } else {
+          setIsAiParsing(true);
+          try {
+            const aiResult = await parseWithGroqAI(rows, mode);
+            if (!aiResult.success) {
+              setParseErrors([{ row: 0, message: aiResult.error || 'AI parsing failed to map columns.' }]);
+              return;
+            }
+
+            const wellMap = new Map<string, UploadedWell>();
+            let wellIdCounter = 1;
+
+            aiResult.rows.forEach(row => {
+              const name = row.well_name;
+              const location = row.location || name;
+              const month = row.month;
+              const wl = row.wl;
+              const q = row.q;
+              const r = row.r;
+
+              if (!wellMap.has(name)) {
+                wellMap.set(name, {
+                  id: wellIdCounter++,
+                  name,
+                  location,
+                  aquiferId: row.aquifer_id,
+                  aquiferName: row.aquifer_name,
+                  K: mode === 'advanced' ? row.K : undefined,
+                  b: mode === 'advanced' ? row.b : undefined,
+                  S: mode === 'advanced' ? row.S : undefined,
+                  history: []
+                });
+              }
+
+              wellMap.get(name)!.history.push({ month, q, r: mode === 'advanced' ? r : undefined, wl });
+            });
+
+            const wells: UploadedWell[] = [];
+            const errors: ParseError[] = [];
+            wellMap.forEach(w => {
+              if (w.history.length < 3) {
+                errors.push({ row: 0, message: `Well "${w.name}" has only ${w.history.length} history rows. AI requires at least 3 monthly history points.` });
+              } else {
+                w.history.sort((a, b) => a.month.localeCompare(b.month));
+                wells.push(w);
+              }
+            });
+
+            if (errors.length > 0) {
+              setParseErrors(errors);
+            } else {
+              setUploadedWells(wells);
+              setAiSummary(aiResult.summary);
+              setAiMappings(aiResult.mappings);
+              setAiWarnings(aiResult.warnings);
+            }
+          } catch (err) {
+            setParseErrors([{ row: 0, message: `AI parsing failed: ${String(err)}` }]);
+          } finally {
+            setIsAiParsing(false);
           }
-
-          const r = mode === 'advanced' ? Number(row.r) || 0 : undefined;
-          wellMap.get(key)!.history.push({ month, q, r, wl });
-        });
-
-        if (errors.length > 0) { setParseErrors(errors); return; }
-
-        // Validate min history
-        const wells: UploadedWell[] = [];
-        wellMap.forEach(w => {
-          if (w.history.length < 3) {
-            errors.push({ row: 0, message: `Well "${w.name}" has only ${w.history.length} history rows (min 3 required).` });
-          } else {
-            w.history.sort((a, b) => a.month.localeCompare(b.month));
-            wells.push(w);
-          }
-        });
-
-        if (errors.length > 0) { setParseErrors(errors); return; }
-        setUploadedWells(wells);
+        }
       } catch (err) {
         setParseErrors([{ row: 0, message: `Failed to read file: ${String(err)}` }]);
       }
@@ -153,7 +229,9 @@ export default function UploadAnalyze({ userRole, selectedLanguage: _selectedLan
   const runAnalysis = () => {
     if (uploadedWells.length === 0) return;
     setIsRunning(true);
-    setTimeout(() => {
+    setAiAnalysisSummary('');
+    setIsAiAnalyzing(true);
+    setTimeout(async () => {
       try {
         const results: WellResult[] = uploadedWells.map(w => ({
           well: w,
@@ -161,13 +239,13 @@ export default function UploadAnalyze({ userRole, selectedLanguage: _selectedLan
         }));
         setWellResults(results);
 
+        let groups: AquiferGroup[] = [];
         if (mode === 'advanced') {
           const aqMap = new Map<number, { wells: UploadedWell[]; name: string }>();
           uploadedWells.forEach(w => {
             if (!aqMap.has(w.aquiferId)) aqMap.set(w.aquiferId, { wells: [], name: w.aquiferName });
             aqMap.get(w.aquiferId)!.wells.push(w);
           });
-          const groups: AquiferGroup[] = [];
           aqMap.forEach((val, id) => {
             const firstWell = val.wells[0];
             const aqResult = getAquiferForecast(val.wells, scenario, 6, firstWell.K, firstWell.b, firstWell.S);
@@ -179,10 +257,41 @@ export default function UploadAnalyze({ userRole, selectedLanguage: _selectedLan
           setShowBatchSummary(true);
         }
         if (results.length > 0) setSelectedId(`well-${results[0].well.id}`);
+
+        // Generate AI analysis report
+        const metricsData = results.map(wr => {
+          const history = wr.result.historyFits;
+          const forecast = wr.result.forecastPoints;
+          const lastHistWl = history[history.length - 1]?.wl ?? 0;
+          const lastForeWl = forecast[forecast.length - 1]?.wl ?? 0;
+          const trend = lastForeWl > lastHistWl
+            ? 'Increasing depth (falling water level)'
+            : lastForeWl < lastHistWl
+              ? 'Decreasing depth (rising water level)'
+              : 'Stable water level';
+          return {
+            wellName: wr.well.name,
+            aquiferName: wr.well.aquiferName,
+            accuracy: wr.result.metrics.wl.accuracyPercent,
+            mae: wr.result.metrics.wl.mae,
+            rSquared: wr.result.metrics.wl.rSquared,
+            forecastTrend: trend
+          };
+        });
+
+        const summary = await getAIAnalysisSummary(
+          results.length,
+          mode === 'advanced' ? groups.length : 1,
+          mode,
+          metricsData
+        );
+        setAiAnalysisSummary(summary);
       } catch (err) {
         setParseErrors([{ row: 0, message: `Analysis error: ${String(err)}` }]);
+      } finally {
+        setIsRunning(false);
+        setIsAiAnalyzing(false);
       }
-      setIsRunning(false);
     }, 100);
   };
 
@@ -249,6 +358,57 @@ export default function UploadAnalyze({ userRole, selectedLanguage: _selectedLan
         <p style={{ fontSize: '12px', color: 'var(--text-muted)' }}>Supports .xlsx — {mode === 'simple' ? 'columns: well_name, location, month, wl, q' : 'columns: well_name, location, aquifer_id, aquifer_name, K, b, S, month, wl, q, r'}</p>
       </div>
 
+      {/* AI Parsing status / results */}
+      {isAiParsing && (
+        <div className="glass-panel" style={{ display: 'flex', alignItems: 'center', gap: '16px', borderLeft: '4px solid var(--primary)' }}>
+          <Cpu className="spinner" size={24} style={{ color: 'var(--primary)' }} />
+          <div>
+            <strong style={{ display: 'block', marginBottom: '4px' }}>AI-Enhanced Data Mapping Active</strong>
+            <p style={{ fontSize: '13px', color: 'var(--text-secondary)', margin: 0 }}>
+              The uploaded file layout does not match our standard template. Groq AI is analyzing the headers and raw values to automatically reconstruct the schema...
+            </p>
+          </div>
+        </div>
+      )}
+
+      {!isAiParsing && (aiSummary || aiMappings) && (
+        <div className="glass-panel" style={{ borderLeft: '4px solid var(--success)', display: 'flex', flexDirection: 'column', gap: '12px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+            <CheckCircle size={20} color="var(--success)" />
+            <div>
+              <strong style={{ fontSize: '15px' }}>AI Reconstructive Parsing Successful</strong>
+              <p style={{ fontSize: '12px', color: 'var(--text-muted)', margin: '2px 0 0 0' }}>
+                Your spreadsheet has been successfully mapped using AI-driven heuristics.
+              </p>
+            </div>
+          </div>
+          
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px', marginTop: '4px', borderTop: '1px solid rgba(255,255,255,0.06)', paddingTop: '12px' }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+              <span style={{ fontSize: '11px', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Analysis Summary</span>
+              <p style={{ fontSize: '13px', color: 'var(--text-secondary)', margin: 0 }}>{aiSummary}</p>
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+              <span style={{ fontSize: '11px', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Detected Field Mappings</span>
+              <p style={{ fontSize: '13px', color: 'var(--text-secondary)', margin: 0 }}>{aiMappings}</p>
+            </div>
+          </div>
+
+          {aiWarnings && aiWarnings.length > 0 && (
+            <div style={{ marginTop: '8px', padding: '10px 14px', borderRadius: '8px', background: 'rgba(239,68,68,0.05)', border: '1px solid rgba(239,68,68,0.15)' }}>
+              <span style={{ fontSize: '11px', color: 'var(--critical)', fontWeight: '600', display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '6px' }}>
+                <AlertTriangle size={14} /> AI Data Warnings
+              </span>
+              <ul style={{ margin: 0, paddingLeft: '16px', fontSize: '12px', color: 'var(--text-secondary)' }}>
+                {aiWarnings.map((warning, idx) => (
+                  <li key={idx}>{warning}</li>
+                ))}
+              </ul>
+            </div>
+          )}
+        </div>
+      )}
+
       {/* Errors */}
       {parseErrors.length > 0 && (
         <div className="glass-panel" style={{ borderLeft: '4px solid var(--critical)' }}>
@@ -311,6 +471,34 @@ export default function UploadAnalyze({ userRole, selectedLanguage: _selectedLan
                   </div>
                 ))}
               </div>
+            </div>
+          )}
+
+          {/* AI Hydrological Report */}
+          {(isAiAnalyzing || aiAnalysisSummary) && (
+            <div className="glass-panel" style={{ borderLeft: '4px solid var(--secondary)', display: 'flex', flexDirection: 'column', gap: '12px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                <Sparkles size={20} color="var(--secondary)" className={isAiAnalyzing ? 'spinner' : ''} />
+                <strong style={{ fontSize: '15px' }}>Hydrological Expert Interpretation</strong>
+                {isAiAnalyzing && (
+                  <span style={{ fontSize: '11px', color: 'var(--text-muted)', marginLeft: 'auto' }}>
+                    AI is writing interpretation...
+                  </span>
+                )}
+              </div>
+
+              {isAiAnalyzing ? (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', padding: '6px 0' }}>
+                  <div className="pulse" style={{ height: '14px', width: '95%', background: 'rgba(255,255,255,0.06)', borderRadius: '4px' }} />
+                  <div className="pulse" style={{ height: '14px', width: '80%', background: 'rgba(255,255,255,0.06)', borderRadius: '4px' }} />
+                  <div className="pulse" style={{ height: '14px', width: '88%', background: 'rgba(255,255,255,0.06)', borderRadius: '4px' }} />
+                  <div className="pulse" style={{ height: '14px', width: '70%', background: 'rgba(255,255,255,0.06)', borderRadius: '4px' }} />
+                </div>
+              ) : (
+                <div style={{ fontSize: '13.5px', lineHeight: '1.6', color: 'var(--text-secondary)', whiteSpace: 'pre-line', borderTop: '1px solid rgba(255,255,255,0.06)', paddingTop: '12px' }}>
+                  {aiAnalysisSummary}
+                </div>
+              )}
             </div>
           )}
 
