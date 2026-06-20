@@ -57,7 +57,6 @@ import { translations } from './data/translations';
 import UploadAnalyze from './components/UploadAnalyze';
 import type { LanguageCode } from './data/translations';
 
-import standardDataRaw from './data/standardData.json';
 import advancedDataRaw from './data/advancedData.json';
 import hullsDataRaw from './data/hulls.json';
 
@@ -146,9 +145,21 @@ export default function App() {
   }, [userRole, selectedDataset]);
 
   // Load and type check data
-  const standardWells = standardDataRaw as Well[];
   const advancedAquifers = advancedDataRaw.aquifers as Aquifer[];
   const advancedWells = advancedDataRaw.wells as Well[];
+
+  // Generate standard wells dynamically from advanced wells but strip aquiferId and recharge history
+  const standardWells = useMemo(() => {
+    return advancedWells.map(well => ({
+      ...well,
+      aquiferId: undefined,
+      history: well.history.map(h => ({
+        month: h.month,
+        q: h.q,
+        wl: h.wl
+      })) as HistoryPoint[]
+    }));
+  }, [advancedWells]);
 
   // Active dataset variables
   const wells = selectedDataset === 'standard' ? standardWells : advancedWells;
