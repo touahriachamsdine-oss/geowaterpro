@@ -1,7 +1,7 @@
 import proj4 from 'proj4';
 
 // Define projection parameter string for Lambert Conic Conformal (Algeria Nord, EPSG:30791)
-const ALGERIA_LAMBERT = "+proj=lcc +lat_1=36.16666666666666 +lat_0=36.16666666666666 +lon_0=3 +k_0=0.999625769 +x_0=500000 +y_0=300000 +a=6378249.2 +rf=293.4660212936269 +towgs84=-158,-205,-200,0,0,0,0 +units=m +no_defs";
+const ALGERIA_LAMBERT = "+proj=lcc +lat_0=36 +lon_0=2.7 +lat_1=36 +lat_2=36 +x_0=500135 +y_0=300090 +ellps=clrk80ign +towgs84=-158,-205,-200,0,0,0,0 +units=m +no_defs";
 const WGS84 = "+proj=longlat +datum=WGS84 +no_defs";
 
 /**

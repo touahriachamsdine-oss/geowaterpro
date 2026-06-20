@@ -178,7 +178,7 @@ export type LanguageCode = 'en' | 'ar' | 'fr';
 
 export const translations: Record<LanguageCode, TranslationSet> = {
   en: {
-    title: 'GeoWaterics Platform',
+    title: 'GeoWaterIcs Platform',
     subtitle: 'Groundwater Monitoring, Analytical Modeling & AI Forecasting',
     tabDashboard: 'Overview & Charts',
     tabMap: 'Interactive Map',
@@ -210,7 +210,7 @@ export const translations: Record<LanguageCode, TranslationSet> = {
     unitSystem: 'Unit System',
     metric: 'Metric (SI)',
     dataset: 'Current Dataset',
-    standardDataset: 'Standard Dataset (10 Wells)',
+    standardDataset: 'Standard Dataset (6 Wells)',
     advancedDataset: 'Advanced Dataset (30 Wells, 3 Aquifers)',
     datasetDesc: 'Switch between the standard pumping/drawdown dataset or the advanced dataset with detailed aquifer properties and recharge dynamics.',
 
@@ -333,7 +333,7 @@ export const translations: Record<LanguageCode, TranslationSet> = {
     accuracyBlended: 'Blended Accuracy Score',
     technicalSpecs: 'Technical Specifications',
     specDoc: 'Technical Specifications Document',
-    loginTitle: 'GeoWaterics Platform Login',
+    loginTitle: 'GeoWaterIcs Platform Login',
     loginSubtitle: 'Enter credentials or use quick select to access dashboard tools.',
     username: 'Username',
     password: 'Password',
@@ -347,7 +347,7 @@ export const translations: Record<LanguageCode, TranslationSet> = {
     locked: 'Locked'
   },
   ar: {
-    title: 'منصة جيومائية - GeoWaterics',
+    title: 'منصة جيومائية - GeoWaterIcs',
     subtitle: 'مراقبة المياه الجوفية، النمذجة التحليلية والتنبؤ بالذكاء الاصطناعي',
     tabDashboard: 'نظرة عامة ورسوم بيانية',
     tabMap: 'الخريطة التفاعلية',
@@ -379,7 +379,7 @@ export const translations: Record<LanguageCode, TranslationSet> = {
     unitSystem: 'نظام الوحدات',
     metric: 'المتري (SI)',
     dataset: 'مجموعة البيانات الحالية',
-    standardDataset: 'مجموعة البيانات القياسية (10 آبار)',
+    standardDataset: 'مجموعة البيانات القياسية (6 آبار)',
     advancedDataset: 'مجموعة البيانات المتقدمة (30 بئراً، 3 أحواض)',
     datasetDesc: 'التبديل بين البيانات القياسية للضخ والهبوط أو مجموعة البيانات المتقدمة التي تشمل الخصائص الهيدروليكية للأحواض وديناميكيات التغذية الجوفية.',
 
@@ -502,7 +502,7 @@ export const translations: Record<LanguageCode, TranslationSet> = {
     accuracyBlended: 'معدل الدقة المشترك',
     technicalSpecs: 'المواصفات الفنية',
     specDoc: 'وثيقة المواصفات الفنية للمنصة',
-    loginTitle: 'تسجيل الدخول إلى منصة GeoWaterics',
+    loginTitle: 'تسجيل الدخول إلى منصة GeoWaterIcs',
     loginSubtitle: 'أدخل بيانات الاعتماد أو استخدم الدخول السريع للوصول إلى أدوات المنصة.',
     username: 'اسم المستخدم',
     password: 'كلمة المرور',
@@ -516,7 +516,7 @@ export const translations: Record<LanguageCode, TranslationSet> = {
     locked: 'مغلق'
   },
   fr: {
-    title: 'Plateforme GeoWaterics',
+    title: 'Plateforme GeoWaterIcs',
     subtitle: 'Suivi des Nappes, Modélisation Analytique & Prédictions IA',
     tabDashboard: 'Aperçu & Graphiques',
     tabMap: 'Carte Interactive',
@@ -548,7 +548,7 @@ export const translations: Record<LanguageCode, TranslationSet> = {
     unitSystem: 'Système d\'unités',
     metric: 'Métrique (SI)',
     dataset: 'Jeu de données actuel',
-    standardDataset: 'Jeu de Données Standard (10 Puits)',
+    standardDataset: 'Jeu de Données Standard (6 Puits)',
     advancedDataset: 'Jeu de Données Avancé (30 Puits, 3 Aquifères)',
     datasetDesc: 'Basculez entre le jeu de données de pompage/rabattement standard ou le jeu de données avancé comprenant les propriétés hydrauliques des aquifères et la recharge.',
 
@@ -671,7 +671,7 @@ export const translations: Record<LanguageCode, TranslationSet> = {
     accuracyBlended: 'Précision Globale Combinée',
     technicalSpecs: 'Spécifications Techniques',
     specDoc: 'Document des Spécifications Techniques',
-    loginTitle: 'Connexion Plateforme GeoWaterics',
+    loginTitle: 'Connexion Plateforme GeoWaterIcs',
     loginSubtitle: 'Saisissez vos identifiants ou utilisez la sélection rapide pour accéder aux outils.',
     username: "Nom d'utilisateur",
     password: 'Mot de passe',

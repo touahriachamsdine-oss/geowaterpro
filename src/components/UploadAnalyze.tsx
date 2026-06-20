@@ -50,7 +50,7 @@ function downloadTemplate(mode: 'simple' | 'advanced') {
     : [['Well-A', 'Site 1', 1, 'Aquifer Alpha', 10, 50, 0.005, '2023/01', 25.4, 1500, 0.002]];
   const ws = XLSX.utils.aoa_to_sheet([headers, ...example]);
   XLSX.utils.book_append_sheet(wb, ws, 'Template');
-  XLSX.writeFile(wb, `GeoWaterics_${mode}_template.xlsx`);
+  XLSX.writeFile(wb, `GeoWaterIcs_${mode}_template.xlsx`);
 }
 
 // ── Main Component ─────────────────────────────────────────────────────────
@@ -345,7 +345,7 @@ export default function UploadAnalyze({ userRole, selectedLanguage }: Props) {
         pdf.addImage(imgData, 'PNG', 0, 0, canvas.width, canvas.height);
         
         const cleanLabel = activeLabel ? activeLabel.replace(/[\s:—/]+/g, '_') : 'report';
-        pdf.save(`GeoWaterics_Custom_Analysis_${cleanLabel}.pdf`);
+        pdf.save(`GeoWaterIcs_Custom_Analysis_${cleanLabel}.pdf`);
       } catch (err) {
         console.error('Error generating PDF:', err);
       } finally {
@@ -360,7 +360,7 @@ export default function UploadAnalyze({ userRole, selectedLanguage }: Props) {
       <div className="header-row" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '16px' }}>
         <div className="page-title">
           <h2>Upload & Analyze</h2>
-          <p>Upload your own Excel file to run the full GeoWaterics analytical + AI + hybrid pipeline on custom well data.</p>
+          <p>Upload your own Excel file to run the full GeoWaterIcs analytical + AI + hybrid pipeline on custom well data.</p>
         </div>
         {wellResults.length > 0 && !isExportingPdf && (
           <button
@@ -531,7 +531,7 @@ export default function UploadAnalyze({ userRole, selectedLanguage }: Props) {
             }}>
               <div>
                 <h1 style={{ fontSize: '24px', fontWeight: '800', color: 'var(--primary)', margin: 0 }}>
-                  {selectedLanguage === 'ar' ? 'منصة جيومائية - GeoWaterics' : selectedLanguage === 'fr' ? 'Plateforme GeoWaterics' : 'GeoWaterics Platform'}
+                  {selectedLanguage === 'ar' ? 'منصة جيومائية - GeoWaterIcs' : selectedLanguage === 'fr' ? 'Plateforme GeoWaterIcs' : 'GeoWaterIcs Platform'}
                 </h1>
                 <p style={{ fontSize: '12px', color: 'var(--text-secondary)', margin: '6px 0 0 0' }}>
                   {selectedLanguage === 'ar' ? 'تحليل بيانات الآبار المخصصة المرفوعة' : selectedLanguage === 'fr' ? 'Analyse des Données de Puits Personnalisées' : 'Uploaded Custom Well Data Analysis Report'}

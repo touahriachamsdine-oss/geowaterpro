@@ -59,6 +59,9 @@ import type { LanguageCode } from './data/translations';
 
 import standardDataRaw from './data/standardData.json';
 import advancedDataRaw from './data/advancedData.json';
+import hullsDataRaw from './data/hulls.json';
+
+const hullsData = hullsDataRaw as unknown as Record<string, [number, number][]>;
 
 // Fix Leaflet marker icon asset loading issues using CDNs
 delete (L.Icon.Default.prototype as any)._getIconUrl;
@@ -403,40 +406,19 @@ export default function App() {
       id: 1,
       name: "Bassin d’El Malabiod",
       color: "#c084fc",
-      coords: [
-        [35.44, 8.36],
-        [35.46, 8.43],
-        [35.43, 8.49],
-        [35.38, 8.47],
-        [35.36, 8.40],
-        [35.39, 8.34]
-      ] as [number, number][]
+      coords: (hullsData['1'] || []) as [number, number][]
     },
     {
       id: 2,
       name: "Bassin alluvial de Tébessa",
       color: "#38bdf8",
-      coords: [
-        [35.45, 8.04],
-        [35.46, 8.15],
-        [35.41, 8.19],
-        [35.37, 8.17],
-        [35.35, 8.09],
-        [35.38, 8.02]
-      ] as [number, number][]
+      coords: (hullsData['2'] || []) as [number, number][]
     },
     {
       id: 3,
       name: "Bassin de Chéria",
       color: "#10b981",
-      coords: [
-        [35.31, 7.66],
-        [35.32, 7.78],
-        [35.28, 7.83],
-        [35.22, 7.80],
-        [35.21, 7.69],
-        [35.25, 7.63]
-      ] as [number, number][]
+      coords: (hullsData['3'] || []) as [number, number][]
     }
   ], []);
 
@@ -1026,7 +1008,7 @@ export default function App() {
         });
 
         pdf.addImage(imgData, 'PNG', 0, 0, canvas.width, canvas.height);
-        pdf.save(`GeoWaterics_AI_Forecast_${selectedWell?.name || 'Well'}.pdf`);
+        pdf.save(`GeoWaterIcs_AI_Forecast_${selectedWell?.name || 'Well'}.pdf`);
       } catch (err) {
         console.error('Error generating PDF:', err);
       } finally {
@@ -2520,7 +2502,7 @@ export default function App() {
               }}>
                 <div>
                   <h1 style={{ fontSize: '24px', fontWeight: '800', color: 'var(--primary)', margin: 0 }}>
-                    {selectedLanguage === 'ar' ? 'منصة جيومائية - GeoWaterics' : selectedLanguage === 'fr' ? 'Plateforme GeoWaterics' : 'GeoWaterics Platform'}
+                    {selectedLanguage === 'ar' ? 'منصة جيومائية - GeoWaterIcs' : selectedLanguage === 'fr' ? 'Plateforme GeoWaterIcs' : 'GeoWaterIcs Platform'}
                   </h1>
                   <p style={{ fontSize: '12px', color: 'var(--text-secondary)', margin: '6px 0 0 0' }}>
                     {selectedLanguage === 'ar' ? 'تقرير التنبؤ الذكي واستدامة المياه الجوفية' : selectedLanguage === 'fr' ? 'Rapport de Prévision IA & de Durabilité des Nappes' : 'AI-Powered Groundwater Level Forecasting & Sustainability Report'}
@@ -3050,7 +3032,7 @@ export default function App() {
               <div style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>
                 <p>Location Context: Tébessa, North Algeria (EPSG:30791 - Lambert Conic Conformal Zone Nord)</p>
                 <p style={{ marginTop: '4px' }}>AI Predictive Model: Ridge Regularized Polynomial Projection</p>
-                <p style={{ marginTop: '4px' }}>GeoWaterics Hydrological Dashboard © 2026. Made in pair with DeepMind AI.</p>
+                <p style={{ marginTop: '4px' }}>GeoWaterIcs Hydrological Dashboard © 2026. Made in pair with DeepMind AI.</p>
               </div>
             </div>
           </div>

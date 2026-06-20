@@ -1,6 +1,6 @@
-// ── Groq AI Integration for GeoWaterics ─────────────────────────────────────
+// ── Groq AI Integration for GeoWaterIcs ─────────────────────────────────────
 // Uses Groq's fast LLM API to intelligently read any uploaded Excel data,
-// understand the columns, and reformat it into the GeoWaterics schema.
+// understand the columns, and reformat it into the GeoWaterIcs schema.
 
 // Key is split + encoded to avoid plaintext exposure in source / git scrapers
 const _p = ['Z3NrXzhSVXFOMzBYSVdH', 'OTQxckhsSnNrV0dkeWIz', 'Rll4SVg1MDlBS3pQNU9o', 'a0RpdTZqZE90VVg='];
@@ -57,9 +57,9 @@ Required output columns (JSON keys):
 - q (number): Pumping rate in m³/month (positive number)
 - r (number): Recharge rate in m/month (typically 0–0.01, use 0 if not available)`;
 
-  return `You are a hydrological data analyst for GeoWaterics, a groundwater analysis platform.
+  return `You are a hydrological data analyst for GeoWaterIcs, a groundwater analysis platform.
 Your job is to take raw spreadsheet data from users (which may have ANY column names, units, or formats) 
-and intelligently reformat it into the exact JSON schema GeoWaterics needs.
+and intelligently reformat it into the exact JSON schema GeoWaterIcs needs.
 
 ## Analysis Mode: ${mode.toUpperCase()}
 
@@ -129,7 +129,7 @@ ${JSON.stringify(sample, null, 0)}
 
 ${rawRows.length > sampleSize ? `\n## NOTE: There are ${rawRows.length - sampleSize} more rows with the same structure. Process ALL rows by applying the same column mapping you determine from this sample. I will provide the remaining rows after you confirm the mapping.` : ''}
 
-Please analyze this data, identify the columns, convert to the GeoWaterics ${mode} mode schema, and return the formatted JSON.`;
+Please analyze this data, identify the columns, convert to the GeoWaterIcs ${mode} mode schema, and return the formatted JSON.`;
 
   try {
     const response = await fetch(GROQ_API_URL, {
@@ -364,7 +364,7 @@ export async function getAIAnalysisSummary(
   mode: string,
   metricsData: { wellName: string; aquiferName: string; accuracy: number; mae: number; rSquared: number; forecastTrend: string }[]
 ): Promise<string> {
-  const prompt = `You are a hydrological analyst for GeoWaterics. 
+  const prompt = `You are a hydrological analyst for GeoWaterIcs. 
 Provide a concise professional interpretation (3-5 paragraphs) of the following groundwater analysis results.
 Focus on: water level trends, model accuracy assessment, risk identification, and recommendations.
 
