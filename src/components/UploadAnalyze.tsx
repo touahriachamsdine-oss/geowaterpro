@@ -5,6 +5,10 @@ import { trainAndForecast, getAquiferForecast, SCENARIOS } from '../utils/foreca
 import type { ForecastResult, AquiferForecastResult } from '../utils/forecasting';
 import { parseWithGroqAI, getAIAnalysisSummary } from '../utils/groqAI';
 import { ResponsiveContainer, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend } from 'recharts';
+import html2canvas from 'html2canvas';
+import jsPDF from 'jspdf';
+import { translations } from '../data/translations';
+
 
 // ── Types ──────────────────────────────────────────────────────────────────
 interface UploadedWell {
@@ -55,7 +59,7 @@ interface Props {
   selectedLanguage: string;
 }
 
-export default function UploadAnalyze({ userRole, selectedLanguage: _selectedLanguage }: Props) {
+export default function UploadAnalyze({ userRole, selectedLanguage }: Props) {
   const fileRef = useRef<HTMLInputElement>(null);
   const [parseErrors, setParseErrors] = useState<ParseError[]>([]);
   const [uploadedWells, setUploadedWells] = useState<UploadedWell[]>([]);
@@ -66,6 +70,10 @@ export default function UploadAnalyze({ userRole, selectedLanguage: _selectedLan
   const [isRunning, setIsRunning] = useState(false);
   const [fileName, setFileName] = useState('');
   const [showBatchSummary, setShowBatchSummary] = useState(false);
+  const [isExportingPdf, setIsExportingPdf] = useState(false);
+
+  const lang = (selectedLanguage as 'en' | 'ar' | 'fr') || 'en';
+  const t = translations[lang] || translations.en;
 
   // Groq AI State hooks
   const [isAiParsing, setIsAiParsing] = useState(false);
@@ -312,14 +320,67 @@ export default function UploadAnalyze({ userRole, selectedLanguage: _selectedLan
       ? `Aquifer: ${selectedAqGroup.name} — Averaged across ${selectedAqGroup.wells.length} wells`
       : null;
 
+  const exportToPDF = async () => {
+    const reportElement = document.getElementById('ai-report-content');
+    if (!reportElement) return;
+
+    setIsExportingPdf(true);
+    setTimeout(async () => {
+      try {
+        const canvas = await html2canvas(reportElement, {
+          scale: 2,
+          useCORS: true,
+          backgroundColor: '#020617',
+          logging: false
+        });
+
+        const imgData = canvas.toDataURL('image/png');
+
+        const pdf = new jsPDF({
+          orientation: canvas.width > canvas.height ? 'l' : 'p',
+          unit: 'px',
+          format: [canvas.width, canvas.height]
+        });
+
+        pdf.addImage(imgData, 'PNG', 0, 0, canvas.width, canvas.height);
+        
+        const cleanLabel = activeLabel ? activeLabel.replace(/[\s:—/]+/g, '_') : 'report';
+        pdf.save(`GeoWaterics_Custom_Analysis_${cleanLabel}.pdf`);
+      } catch (err) {
+        console.error('Error generating PDF:', err);
+      } finally {
+        setIsExportingPdf(false);
+      }
+    }, 300);
+  };
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
       {/* Header */}
-      <div className="header-row">
+      <div className="header-row" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '16px' }}>
         <div className="page-title">
           <h2>Upload & Analyze</h2>
           <p>Upload your own Excel file to run the full GeoWaterics analytical + AI + hybrid pipeline on custom well data.</p>
         </div>
+        {wellResults.length > 0 && !isExportingPdf && (
+          <button
+            onClick={exportToPDF}
+            className="btn-primary"
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '8px',
+              padding: '8px 16px',
+              fontSize: '13px',
+              fontWeight: '600',
+              borderRadius: '8px',
+              cursor: 'pointer',
+            }}
+          >
+            <Download size={16} />
+            {t.downloadReport}
+          </button>
+        )}
       </div>
 
       {/* Mode + Template */}
@@ -444,7 +505,47 @@ export default function UploadAnalyze({ userRole, selectedLanguage: _selectedLan
 
       {/* Results */}
       {wellResults.length > 0 && (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+        <div 
+          id="ai-report-content"
+          style={{ 
+            display: 'flex', 
+            flexDirection: 'column', 
+            gap: '20px',
+            padding: isExportingPdf ? '32px' : '0',
+            background: isExportingPdf ? '#020617' : 'transparent',
+            borderRadius: isExportingPdf ? '16px' : '0',
+            color: '#ffffff',
+            width: '100%'
+          }}
+        >
+          {/* Custom PDF Header */}
+          {isExportingPdf && (
+            <div style={{ 
+              display: 'flex', 
+              justifyContent: 'space-between', 
+              alignItems: 'center', 
+              borderBottom: '2px solid rgba(255, 255, 255, 0.1)', 
+              paddingBottom: '20px',
+              marginBottom: '10px',
+              width: '100%'
+            }}>
+              <div>
+                <h1 style={{ fontSize: '24px', fontWeight: '800', color: 'var(--primary)', margin: 0 }}>
+                  {selectedLanguage === 'ar' ? 'منصة جيومائية - GeoWaterics' : selectedLanguage === 'fr' ? 'Plateforme GeoWaterics' : 'GeoWaterics Platform'}
+                </h1>
+                <p style={{ fontSize: '12px', color: 'var(--text-secondary)', margin: '6px 0 0 0' }}>
+                  {selectedLanguage === 'ar' ? 'تحليل بيانات الآبار المخصصة المرفوعة' : selectedLanguage === 'fr' ? 'Analyse des Données de Puits Personnalisées' : 'Uploaded Custom Well Data Analysis Report'}
+                </p>
+              </div>
+              <div style={{ textAlign: 'right', fontSize: '11px', color: 'var(--text-muted)', lineHeight: '1.4' }}>
+                <div><strong>{selectedLanguage === 'ar' ? 'التاريخ' : selectedLanguage === 'fr' ? 'Date' : 'Date'}:</strong> {new Date().toLocaleDateString()}</div>
+                <div><strong>{selectedLanguage === 'ar' ? 'نوع التحليل' : selectedLanguage === 'fr' ? 'Mode' : 'Analysis Mode'}:</strong> {mode === 'advanced' ? 'Advanced' : 'Standard/Simple'}</div>
+                {activeLabel && (
+                  <div><strong>{selectedLanguage === 'ar' ? 'النطاق النشط' : selectedLanguage === 'fr' ? 'Champ Actif' : 'Active Scope'}:</strong> {activeLabel}</div>
+                )}
+              </div>
+            </div>
+          )}
 
           {/* Batch summary */}
           {showBatchSummary && (
@@ -512,7 +613,7 @@ export default function UploadAnalyze({ userRole, selectedLanguage: _selectedLan
               </div>
 
               {/* Selector for individual wells in advanced mode */}
-              {mode === 'advanced' && selectedAqGroup && (
+              {!isExportingPdf && mode === 'advanced' && selectedAqGroup && (
                 <div className="glass-panel" style={{ padding: '14px' }}>
                   <span style={{ fontSize: '12px', color: 'var(--text-secondary)', marginRight: '10px' }}>Inspect individual well:</span>
                   <select onChange={e => setSelectedId(e.target.value)} value={selectedId || ''} className="form-select" style={{ fontSize: '12px', padding: '4px 10px' }}>
